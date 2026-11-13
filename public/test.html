@@ -441,6 +441,11 @@ function publishBody(titleSuffix = "") {
   const body = { title: val("f-title") + titleSuffix, fee_near: val("f-fee"), messages };
   if (val("f-market")) body.market = val("f-market");
   if (val("f-summary")) body.summary = val("f-summary");
+  const conditions = {};
+  for (const [key, id] of [["direction", "f-direction"], ["entry", "f-entry"], ["invalidation", "f-invalidation"], ["exit", "f-exit"]]) {
+    if (val(id)) conditions[key] = val(id);
+  }
+  if (Object.keys(conditions).length) body.conditions = conditions;
   if (val("f-expires")) body.expires_at = new Date(val("f-expires")).toISOString();
   if (val("f-payout")) body.payout_account = val("f-payout");
   return body;
@@ -596,7 +601,11 @@ const SECTIONS = [
       <label>Market<input id="f-market" value="ETH-USD"></label>
       <label>Fee per filled order (NEAR)<input id="f-fee" value="0.1"></label>
       <label>Payout account (optional)<input id="f-payout" placeholder="defaults to Alice"></label>
+      <label>Direction<select id="f-direction"><option value="short">short (sell)</option><option value="long">long (buy)</option><option value="">not stated</option></select></label>
       <label>Expires (optional)<input id="f-expires" type="datetime-local"></label>
+      <label class="full">Entry<input id="f-entry" value="15-minute close back below yesterday's UTC high"></label>
+      <label class="full">Invalidation<input id="f-invalidation" value="1-hour close above the sweep high"></label>
+      <label class="full">Exit (optional)<input id="f-exit" placeholder="when to take profit or close"></label>
       <label class="full">Public summary<input id="f-summary" value="Fade a failed sweep of yesterday's UTC high."></label>
       <label class="full">Approved messages (JSON)<textarea id="f-messages">[
   {"role": "user", "content": "ETH swept yesterday's high. Is the breakout real?"},

@@ -34,7 +34,7 @@ test("a creator's agent publishes and a borrower's agent reads and trades over M
   const aliceAgent = await connect(alicePublish);
   const tools = (await aliceAgent.listTools()).tools.map((t) => t.name).sort();
   assert.deepEqual(tools, [
-    "condex_get_order", "condex_list_insights", "condex_list_receipts", "condex_place_order", "condex_publish_insight",
+    "condex_get_order", "condex_get_proof", "condex_list_insights", "condex_list_receipts", "condex_place_order", "condex_publish_insight",
     "condex_publish_version", "condex_quote_fee", "condex_read_insight", "condex_whoami",
   ]);
 
@@ -98,7 +98,7 @@ test("an MCP server saying hello makes its key show as connected, with its tools
   assert.ok(after.mcp.tools.includes("condex_publish_insight"));
 
   const tools = (await api("GET", "/v1/mcp/tools")).body.tools.map((t: { name: string }) => t.name);
-  assert.equal(tools.length, 9);
+  assert.equal(tools.length, 10);
   assert.ok(tools.includes("condex_place_order"));
 
   await sayHello({ apiUrl: srv.base, apiKey: "cdx_not-a-real-key" }); // must not throw

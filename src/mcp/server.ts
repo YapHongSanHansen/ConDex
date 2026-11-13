@@ -38,6 +38,12 @@ const publishShape = {
   title: z.string().min(1).max(200).describe("Short title for the insight"),
   market: z.string().max(64).optional().describe('Market the insight is about, e.g. "ETH-USD"'),
   summary: z.string().max(1000).optional().describe("Public one-paragraph preview. Do not include private details."),
+  conditions: z.object({
+    direction: z.enum(["long", "short"]).optional().describe("long opens with a buy, short with a sell; orders on the other side cannot link"),
+    entry: z.string().max(1000).optional().describe("When to enter, in the creator's words"),
+    invalidation: z.string().max(1000).optional().describe("What would prove the idea wrong, in the creator's words"),
+    exit: z.string().max(1000).optional().describe("Optional: when to take profit or close"),
+  }).optional().describe("The thesis conditions. Preserved exactly as published; a change is a new version."),
   expires_at: z.string().optional().describe("ISO date-time after which the insight can no longer be traded on"),
   fee_near: z.string().describe('Flat fee per filled order, in NEAR, e.g. "0.1"'),
   payout_account: z.string().optional().describe("NEAR account that receives fees. Defaults to the creator's account."),
@@ -102,6 +108,14 @@ export function buildMcpServer(opts: McpOptions): McpServer {
     description: "List public previews of published insight tokens (no message content).",
     inputSchema: { market: z.string().optional().describe("Filter by market") },
   }, ({ market }) => call("GET", `/v1/tokens${market ? `?market=${encodeURIComponent(market)}` : ""}`));
+
+  server.registerTool("condex_get_proof", {
+    title: "Get proof",
+    description:
+      "Proof of thesis (creator, publish time, fingerprint, whether it is still preserved) and every proof of trade " +
+      "(trader, order, first fill, fee paid) for a token. Public; never includes the conversation.",
+    inputSchema: { token_id: z.string().describe("Token id, e.g. ins_...-v1") },
+  }, ({ token_id }) => call("GET", `/v1/tokens/${encodeURIComponent(token_id)}/proof`));
 
   server.registerTool("condex_read_insight", {
     title: "Read insight",
