@@ -2,9 +2,9 @@
 
 Borrow trading insights from AI conversations. Pay the creator when your agent uses one.
 
-A trader can spend an hour with an AI working out when to enter a position and when to walk away. ConDex lets the trader publish that reasoning as a versioned insight on NEAR. Another agent can borrow it through a scoped API key. Borrowing is free. The creator earns a fee when the agent requests the insight for its own use or when an order placed through ConDex receives a fill, depending on the terms the borrower chose.
+A trader can spend an hour with an AI working out when to enter a position and when to walk away. ConDex lets the trader publish that reasoning as a versioned insight on NEAR. Another agent can borrow it through a scoped API key. Borrowing is free. The creator earns the agreed fee on the first successful retrieval under that borrow.
 
-> **Build status** — Project design for the NEAR Hackathon. This repository currently contains the README. The API, contracts, and Hyperliquid testnet integration described below are planned.
+> **Build status** — Project design for the NEAR Hackathon. This repository currently contains the README. The API and NEAR testnet contract described below are planned.
 
 ---
 
@@ -22,48 +22,37 @@ Each borrow comes with an API key scoped to one insight version, a billing rule,
 
 ## How it works
 
-### Two ways to use a borrowed insight
+### One borrowed insight, from chat to receipt
 
-| Package | What the agent can do | When the creator earns a fee |
-| --- | --- | --- |
-| **Use the information** | Request the approved insight through the API and use it in its own analysis or trading system. | Once for the first successful retrieval under that borrow. The agent can then use its copy, whether it trades or decides to wait. |
-| **Execute a trade** | Ask ConDex to watch the private trigger and route an order to Hyperliquid within the borrower’s trading limits. | Once when the linked order receives its first confirmed fill. Watching the trigger, submitting an order, or cancelling an unfilled order is free. |
-
-The borrower chooses one rule when taking out the key, so the same trade never incurs both fees. For the information package, retrieval is the observable use. Once an agent has received the text, it can save it, and ConDex cannot meter its later decisions. For the execution package, ConDex evaluates the private rule internally and checks the venue’s fill record. A partial fill earns the agreed fee once. Further fills on that order and retries of the same request share the original receipt.
-
-### One borrowed trade, from chat to receipt
-
-1. **Publish.** A creator selects an exchange about a failed ETH breakout. The approved rule says to watch for a move above the previous UTC day’s high, then a 15-minute close back below it. The setup expires at the end of the current UTC day. The creator lists a flat fee per filled order.
-2. **Borrow.** An agent chooses the execution package. Its owner authorizes one ETH order, sets a maximum position size and fee, and gives ConDex separate authorization to place that order. ConDex issues the scoped API key. The fee balance is reserved from the borrower’s budget and remains theirs until a billable event occurs.
-3. **Wait.** If the condition never occurs, the key expires, the reserved fee is released, and the creator’s earnings for this borrow are zero.
-4. **Execute.** If the condition occurs within the agreed limits, ConDex submits the ETH short to the existing Hyperliquid testnet market. A fill earns the fee even if the trade later loses money. An order still open at expiry must be cancelled and its final fill status reconciled before the reserve is released.
-5. **Settle.** ConDex links the borrow, insight version, order, and first fill to one receipt. The borrower can see what triggered the charge, and the creator can see which published insight earned it.
+1. **Publish.** A creator selects an exchange about a failed ETH breakout. The excerpt explains why a move above the previous UTC day’s high followed by a 15-minute close back below it would matter. The creator sets an expiry and a flat retrieval fee.
+2. **Borrow.** A research agent reads the public preview and requests a key for that version. The borrower approves a fee cap. ConDex reserves the agreed fee and issues the key.
+3. **Retrieve or let expire.** The agent can fetch the excerpt for its own analysis. If the key expires unused, ConDex releases the reserve and the borrower pays nothing.
+4. **Settle.** On the first successful retrieval, ConDex records a receipt for the borrow and insight version. The NEAR contract uses that receipt to settle the creator’s fee once.
 
 ### What the API key authorizes
 
-In the proposed API, a borrowing agent passes its key as a bearer credential. A research agent could request the following resource after selecting the information package:
+In the proposed API, a research agent uses its key as a bearer credential to retrieve the approved excerpt:
 
 ```http
 GET /v1/borrows/{borrow_id}/insight
 Authorization: Bearer <borrow-api-key>
 ```
 
-The gateway checks the key’s scope, expiry, and budget before releasing the approved text. If the connection drops, the agent can fetch the same delivery again under the same valid borrow without a second fee. An execution key can request a managed trade and read its status. Wallet signing authority stays with the separately authorized trading integration. Revoking the key stops new requests.
+The gateway checks the key’s scope, expiry, and budget before releasing the approved text. If the connection drops, the agent can fetch the same delivery again under the same valid borrow without a second fee. Revoking the key stops new requests.
 
-## Where NEAR and Hyperliquid fit
+## Where NEAR fits
 
 | Component | Planned responsibility |
 | --- | --- |
 | Creator interface and private storage | Import the chat, let the creator edit and redact the excerpt, and store the approved research privately. |
 | NEAR contract | Register the creator, version hash, and payout terms. Reserve the borrower’s fee budget and settle each usage receipt once. |
-| ConDex API and execution service | Issue scoped keys, meter deliveries, evaluate triggers, and attest to billable events. The prototype would trust this service to report offchain events accurately. |
-| Hyperliquid testnet | Execute the underlying ETH trade against its existing order book and provide the fill record used for billing. [Exchange API](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint) |
+| ConDex API | Issue scoped keys, deliver excerpts, and report successful retrievals to the NEAR contract. The prototype would trust the API to report deliveries accurately. |
 
 ## Can users long or short an insight?
 
 A proposed ConDex market would let users take either side of a question such as “Will this insight earn at least 20 credits in settled usage fees by Friday?” The high-demand side wins at 20 credits or more. The low-demand side wins below 20. Borrowing a free API key contributes zero to that total.
 
-An agent could short ETH using the borrowed insight while another user backs high demand for that same insight. The ETH order uses Hyperliquid liquidity. The demand market needs participants or a market maker willing to fund its two sides. The planned first demo focuses on borrowing and settlement. A later test-credit market would need rules for which fees qualify, including how it handles self-use.
+The planned first demo focuses on borrowing and settlement. A later test-credit market would need participants willing to fund both sides and rules for which fees qualify, including how it handles self-use.
 
 ## Build status
 
@@ -71,4 +60,4 @@ An agent could short ETH using the borrowed insight while another user backs hig
 - [ ] Issue an expiring API key with a borrower-approved fee cap.
 - [ ] Demonstrate an information retrieval and a retry with one charge.
 - [ ] Demonstrate an expired borrow with zero charges.
-- [ ] Link a Hyperliquid testnet fill to a single creator payout and show both receipts.
+- [ ] Show the usage receipt and its corresponding creator payout on NEAR testnet.
