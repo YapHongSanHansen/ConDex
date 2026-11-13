@@ -65,6 +65,28 @@ export function getPreview(ctx: Ctx, tokenId: string) {
   return previewView(ctx, getVersion(ctx, tokenId));
 }
 
+/** Public publisher page: who they are, what they published and how often it was traded. No message content. */
+export function publisherProfile(ctx: Ctx, nearAccountId: string) {
+  const account = ctx.db.prepare("SELECT * FROM accounts WHERE near_account_id = ?").get(nearAccountId) as
+    | Parameters<typeof accountView>[0] | undefined;
+  if (!account) throw notFound(`Publisher ${nearAccountId}`);
+  const { n: insightCount } = ctx.db.prepare("SELECT COUNT(*) AS n FROM insights WHERE creator_id = ?").get(account.id) as { n: number };
+  const fees = ctx.db.prepare("SELECT fee_yocto FROM receipts WHERE creator_id = ?").all(account.id) as Array<{ fee_yocto: string }>;
+  const { n: readCount } = ctx.db.prepare(
+    "SELECT COUNT(*) AS n FROM reads r JOIN insight_versions v ON v.token_id = r.token_id WHERE v.creator_id = ?",
+  ).get(account.id) as { n: number };
+  return {
+    publisher: accountView(account),
+    stats: {
+      insights: insightCount,
+      reads: readCount,
+      filled_orders: fees.length,
+      fees_earned: amount(fees.reduce((sum, f) => sum + BigInt(f.fee_yocto), 0n)),
+    },
+    tokens: listPreviews(ctx, { creatorId: account.id }),
+  };
+}
+
 /** Serves the approved conversation. Reading is always free; each read is logged with a zero charge. */
 export function readInsight(ctx: Ctx, principal: Principal, tokenId: string) {
   requireScope(principal, "read");

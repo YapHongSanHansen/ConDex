@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, describe, test } from "node:test";
-import { ETH_MESSAGES, placeOrder, setupAliceAndBob, startServer } from "./helpers.ts";
+import { ETH_MESSAGES, connectWallet, placeOrder, setupAliceAndBob, startServer } from "./helpers.ts";
 
 const srv = await startServer();
 const { api } = srv;
@@ -104,7 +104,7 @@ describe("README demo checklist", () => {
     const settles = (await api("GET", "/v1/ledger/txs")).body.txs.filter((t: { method: string }) => t.method === "settle_fee");
     assert.equal(settles.length, 1);
 
-    const receipts = (await api("GET", "/v1/receipts", { key: s.aliceOwner })).body.receipts;
+    const receipts = (await api("GET", "/v1/receipts", { key: s.aliceSession })).body.receipts;
     assert.equal(receipts.length, 1);
   });
 
@@ -172,21 +172,21 @@ describe("permissions and validation", () => {
   });
 
   test("a read key scoped to other tokens is refused", async () => {
-    const scoped = await api("POST", "/v1/keys", { key: s.bobOwner, body: { scopes: ["read"], token_ids: ["ins_other-v1"] } });
+    const scoped = await api("POST", "/v1/keys", { key: s.bobSession, body: { scopes: ["read"], token_ids: ["ins_other-v1"] } });
     const r = await api("GET", `/v1/tokens/${s.tokenId}`, { key: scoped.body.secret });
     assert.equal(r.status, 403);
     assert.equal(r.body.error.code, "token_not_in_scope");
   });
 
   test("revoked keys stop working", async () => {
-    const keys = (await api("GET", "/v1/keys", { key: s.bobOwner })).body.keys;
+    const keys = (await api("GET", "/v1/keys", { key: s.bobSession })).body.keys;
     const readKey = keys.find((k: { label: string }) => k.label === "bob research");
-    assert.equal((await api("DELETE", `/v1/keys/${readKey.id}`, { key: s.bobOwner })).status, 200);
+    assert.equal((await api("DELETE", `/v1/keys/${readKey.id}`, { key: s.bobSession })).status, 200);
     assert.equal((await api("GET", `/v1/tokens/${s.tokenId}`, { key: s.bobRead })).status, 401);
   });
 
   test("creators cannot link orders to their own insight", async () => {
-    const r = await api("POST", "/v1/quotes", { key: s.aliceOwner, body: { token_id: s.tokenId } });
+    const r = await api("POST", "/v1/quotes", { key: s.aliceSession, body: { token_id: s.tokenId } });
     assert.equal(r.status, 403);
     assert.equal(r.body.error.code, "self_link");
   });
@@ -216,7 +216,7 @@ describe("permissions and validation", () => {
     assert.notEqual(v2.body.token_id, s.tokenId);
     assert.notEqual(v2.body.content_hash, s.published.body.content_hash);
 
-    const bobPublish = (await api("POST", "/v1/keys", { key: s.bobOwner, body: { scopes: ["publish"] } })).body.secret;
+    const bobPublish = (await api("POST", "/v1/keys", { key: s.bobSession, body: { scopes: ["publish"] } })).body.secret;
     const denied = await api("POST", `/v1/insights/${s.published.body.insight_id}/versions`, {
       key: bobPublish, body: { title: "hijack", fee_near: "0", messages: ETH_MESSAGES },
     });
@@ -227,8 +227,8 @@ describe("permissions and validation", () => {
     const r = await api("POST", "/v1/insights", { key: s.alicePublish, body: { title: "", fee_near: "abc", messages: [] } });
     assert.equal(r.status, 400);
     assert.equal(r.body.error.code, "invalid_request");
-    const badAcct = await api("POST", "/v1/accounts", { body: { near_account_id: "Not Valid!", display_name: "x" } });
-    assert.equal(badAcct.body.error.code, "invalid_near_account");
+    const badAcct = await connectWallet(api, "Not Valid!");
+    assert.equal(badAcct.verify.body.error.code, "invalid_near_account");
     const expired = await api("POST", "/v1/insights", {
       key: s.alicePublish, body: { title: "old", fee_near: "0.1", expires_at: "2020-01-01T00:00:00Z", messages: ETH_MESSAGES },
     });

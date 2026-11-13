@@ -6,10 +6,21 @@ import { EVENT_TYPES } from "../services/settlement.ts";
 const nearAmount = z.union([z.string(), z.number()]).transform(String);
 const decimal = z.union([z.string(), z.number()]).transform(String);
 
-export const createAccountBody = z.object({
-  near_account_id: z.string().min(2).max(64),
-  display_name: z.string().min(1).max(80),
+/** What the wallet's NEP-413 signMessage returns, plus the challenge nonce it signed. */
+export const verifySignInBody = z.object({
+  account_id: z.string().min(2).max(64),
+  public_key: z.string().min(1).max(128),
+  signature: z.string().min(1).max(256),
+  nonce: z.string().min(1).max(128),
+  /** Only for redirect wallets (e.g. MyNearWallet): the exact callbackUrl the website gave the wallet. */
+  callback_url: z.string().min(1).max(2048).optional(),
+  display_name: z.string().min(1).max(80).optional(),
 });
+
+export const updateMeBody = z.object({ display_name: z.string().min(1).max(80) });
+
+/** One-click sign-in with this computer's near-cli wallet: only the account is chosen by the caller. */
+export const nearCliConnectBody = z.object({ account_id: z.string().min(2).max(80) });
 
 export const issueKeyBody = z.object({
   scopes: z.array(z.enum(ISSUABLE_SCOPES)).min(1),

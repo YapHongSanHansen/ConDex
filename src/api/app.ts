@@ -8,16 +8,24 @@ import { ApiError, forbidden, notFound, unauthorized } from "../errors.ts";
 import { type ExecutionVenue, SimulatedVenue } from "../execution/venue.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import { MockLedger } from "../ledger/mockLedger.ts";
-import { type Principal, accountView, authenticate, createAccount, issueKey, listKeys, revokeKey } from "../services/accounts.ts";
-import { getPreview, listPreviews, publishInsight, publishVersion, readInsight } from "../services/insights.ts";
+import { type AccessKeyChecker, NoAccessKeyCheck, RpcAccessKeyChecker } from "../near/accessKeys.ts";
+import { type MessageSigner, NearCliError, NearCliSigner, findNearCli } from "../near/nearCli.ts";
+import {
+  type Principal, accountView, assertNearAccountId, authenticate, issueKey, listKeys, requireSession, revokeKey, updateDisplayName,
+} from "../services/accounts.ts";
+import { createChallenge, signOut, verifySignIn } from "../services/auth.ts";
+import { getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight } from "../services/insights.ts";
 import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
 import { amount, parseNear } from "../util.ts";
+import { assertSameMachine } from "./local.ts";
 import {
-  createAccountBody, depositBody, executionEventBody, issueKeyBody, orderBody, parse, publishBody, quoteBody, simBody,
+  depositBody, executionEventBody, issueKeyBody, nearCliConnectBody, orderBody, parse, publishBody, quoteBody, simBody,
+  updateMeBody, verifySignInBody,
 } from "./schemas.ts";
 
 const TEST_PAGE = fileURLToPath(new URL("../../public/test.html", import.meta.url));
+const MCP_SERVER_PATH = fileURLToPath(new URL("../mcp/server.ts", import.meta.url));
 
 const SIM_ACTIONS: Record<string, EventType> = {
   fill: "fill", cancel: "cancelled", reject: "rejected", expire: "expired", unknown: "status_unknown",
@@ -27,15 +35,22 @@ export interface AppDeps {
   db?: Db;
   ledger?: Ledger;
   venue?: ExecutionVenue;
+  accessKeys?: AccessKeyChecker;
+  /** Signer for one-click near-cli sign-in. Defaults to near-cli-rs if found (dev mode only); null disables it. */
+  nearCli?: MessageSigner | null;
 }
 
 export function createApp(config: Config, deps: AppDeps = {}) {
   const db = deps.db ?? openDb(config.dbPath);
+  const nearCliBinary = deps.nearCli === undefined && config.devMode ? findNearCli() : null;
   const ctx: Ctx = {
     config,
     db,
     ledger: deps.ledger ?? new MockLedger(db),
     venue: deps.venue ?? new SimulatedVenue(),
+    accessKeys: deps.accessKeys
+      ?? (config.walletKeyCheck === "none" ? new NoAccessKeyCheck() : new RpcAccessKeyChecker(config.nearRpcUrl)),
+    nearCli: !config.devMode ? null : deps.nearCli !== undefined ? deps.nearCli : nearCliBinary ? new NearCliSigner(nearCliBinary) : null,
   };
 
   const app = express();
@@ -63,19 +78,82 @@ export function createApp(config: Config, deps: AppDeps = {}) {
 
   // ---- meta ----
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, ledger: ctx.ledger.kind, venue: ctx.venue.name, dev_mode: config.devMode });
+    res.json({
+      ok: true, ledger: ctx.ledger.kind, venue: ctx.venue.name, dev_mode: config.devMode,
+      near_network: config.nearNetwork, wallet_key_check: ctx.accessKeys.mode,
+      storage: config.dbPath === ":memory:" ? "memory" : "file",
+      // Dev mode only: lets the test console print a ready-to-paste `claude mcp add` command.
+      ...(config.devMode ? { mcp_server: MCP_SERVER_PATH } : {}),
+    });
   });
 
-  // ---- accounts and keys ----
-  app.post("/v1/accounts", (req, res) => {
-    const body = parse(createAccountBody, req.body);
-    res.status(201).json(createAccount(ctx, { nearAccountId: body.near_account_id, displayName: body.display_name }));
+  // ---- connect wallet (NEP-413 sign-in) ----
+  // Without a wallet session a visitor can only use the public routes: publisher pages and token previews.
+  app.post("/v1/auth/challenge", (_req, res) => {
+    res.status(201).json(createChallenge(ctx));
+  });
+
+  app.post("/v1/auth/verify", async (req, res) => {
+    const body = parse(verifySignInBody, req.body);
+    res.status(201).json(await verifySignIn(ctx, {
+      accountId: body.account_id, publicKey: body.public_key, signature: body.signature, nonce: body.nonce,
+      callbackUrl: body.callback_url ?? null, displayName: body.display_name ?? null,
+    }));
+  });
+
+  app.post("/v1/auth/logout", (req, res) => {
+    const p = auth(req);
+    requireSession(p);
+    res.json(signOut(ctx, p.keyId));
+  });
+
+  // ---- one-click connect with this computer's near-cli wallet (dev mode only) ----
+  // The server signs ConDex's own challenge with near-cli. Callers pick the account, never the message,
+  // so this cannot be used to sign anything else.
+  app.get("/v1/dev/wallet/near-cli", devOnly, (_req, res) => {
+    res.json({ available: ctx.nearCli !== null, network: config.nearNetwork });
+  });
+
+  app.post("/v1/dev/wallet/near-cli", devOnly, async (req, res) => {
+    assertSameMachine(req);
+    if (!ctx.nearCli) {
+      throw new ApiError(501, "near_cli_unavailable",
+        "near-cli was not found on the computer running ConDex. Install it with: npm install -g near-cli-rs");
+    }
+    const accountId = parse(nearCliConnectBody, req.body).account_id.trim().toLowerCase();
+    assertNearAccountId(accountId, "account_id");
+    const challenge = createChallenge(ctx);
+    let signed;
+    try {
+      signed = await ctx.nearCli.sign({
+        accountId, message: challenge.message, nonce: Buffer.from(challenge.nonce, "base64"),
+        recipient: challenge.recipient, network: challenge.network,
+      });
+    } catch (err) {
+      const reason = err instanceof NearCliError ? err.message : String(err);
+      const hint = /no access keys found in keychain/i.test(reason)
+        ? ` near-cli has no key for ${accountId} on ${challenge.network} in this computer's keychain. Import it with: near account import-account`
+        : "";
+      throw new ApiError(502, "near_cli_failed", `near-cli could not sign in as ${accountId}: ${reason}.${hint}`);
+    }
+    if (signed.accountId !== accountId) {
+      throw new ApiError(502, "near_cli_failed", `near-cli signed as ${signed.accountId} instead of ${accountId}`);
+    }
+    res.status(201).json(await verifySignIn(ctx, {
+      accountId, publicKey: signed.publicKey, signature: signed.signature, nonce: challenge.nonce,
+    }));
   });
 
   app.get("/v1/me", (req, res) => {
     const p = auth(req);
-    res.json({ account: accountView(p.account), key: { id: p.keyId, scopes: p.scopes, token_ids: p.tokenIds } });
+    res.json({ account: accountView(p.account), credential: { type: p.via, id: p.keyId, scopes: p.scopes, token_ids: p.tokenIds } });
   });
+
+  app.patch("/v1/me", (req, res) => {
+    res.json(updateDisplayName(ctx, auth(req), parse(updateMeBody, req.body).display_name));
+  });
+
+  // ---- API keys for agents and MCP (wallet session only) ----
 
   app.post("/v1/keys", (req, res) => {
     const p = auth(req);
@@ -114,7 +192,11 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     res.status(201).json(publishVersion(ctx, p, req.params.insightId!, toPublishInput(parse(publishBody, req.body))));
   });
 
-  // Public catalogue: previews only.
+  // ---- public (no wallet needed): publisher details and previews only ----
+  app.get("/v1/publishers/:nearAccountId", (req, res) => {
+    res.json(publisherProfile(ctx, req.params.nearAccountId!));
+  });
+
   app.get("/v1/tokens", (req, res) => {
     const creatorId = typeof req.query.creator_id === "string" ? req.query.creator_id : undefined;
     const market = typeof req.query.market === "string" ? req.query.market : undefined;

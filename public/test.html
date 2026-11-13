@@ -18,10 +18,43 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--panel); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
-  header h1 { font-size: 18px; margin: 0; }
-  header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  /* navbar */
+  .navbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .brand h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  .nav-right { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+  .wallet { position: relative; min-width: 0; }
+  #wallet-btn { min-height: 34px; min-width: 0; max-width: min(260px, 45vw); }
+  .notice { position: fixed; top: 62px; right: 16px; z-index: 30; max-width: min(380px, calc(100vw - 32px)); display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--warn); box-shadow: 0 10px 30px rgb(0 0 0 / .15); font-size: 13px; }
+  .notice button { padding: 0 6px; border: 0; background: transparent; }
+  #wallet-btn .acct { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wallet-menu { position: absolute; right: 0; top: calc(100% + 6px); width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / .15); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .menu-account { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+  .menu-account span { font-size: 12px; color: var(--muted); }
+  .wallet-menu button { border: 0; background: transparent; justify-content: flex-start; padding: 8px 10px; width: 100%; }
+  .wallet-menu button:hover, .wallet-menu button:focus-visible { background: var(--code); }
+  .subbar { padding: 8px 20px; color: var(--muted); font-size: 13px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+  @media (max-width: 640px) {
+    .navbar, .subbar { padding-left: 16px; padding-right: 16px; }
+    #run-all .long, .brand .tag { display: none; }
+  }
+  /* dialogs */
+  dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); padding: 0; width: min(580px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgb(0 0 0 / .45); }
+  .dialog-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); margin: 0; }
+  .dialog-head h2 { font-size: 16px; margin: 0; }
+  .dialog-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .dialog-body p { margin: 0; }
+  .choice { width: 100%; flex-direction: column; align-items: flex-start; gap: 3px; padding: 12px 14px; text-align: left; }
+  .choice span { color: var(--muted); font-size: 13px; }
+  .step { font-weight: 600; }
+  pre.cmd { white-space: pre-wrap; word-break: break-all; background: var(--code); padding: 8px 10px; border-radius: 6px; margin: 0; font: 12px/1.5 ui-monospace, Consolas, monospace; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .msg { margin: 0; font-size: 13px; color: var(--fail); }
+  .msg:empty { display: none; }
+  .small { font-size: 12px; color: var(--muted); }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; padding: 16px 20px; align-items: start; }
   @media (max-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; } }
   section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
@@ -42,7 +75,7 @@
   input, select, textarea { font: 13px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; width: 100%; min-width: 0; }
   textarea { min-height: 110px; resize: vertical; }
   .full { grid-column: 1 / -1; }
-  aside { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 24px); }
+  aside { position: sticky; top: 70px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 82px); }
   @media (max-width: 1000px) { aside { position: static; max-height: none; } }
   .state { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; align-items: center; font-size: 12px; }
   .state input { padding: 3px 6px; font-size: 12px; }
@@ -67,15 +100,82 @@
 </style>
 </head>
 <body>
-<header>
-  <div>
-    <h1>ConDex Test Console</h1>
-    <p>Every button calls the off-chain API and checks its own expected result. Ledger: <span id="ledger-kind" class="tag">?</span> Venue: <span id="venue-kind" class="tag">?</span></p>
+<nav class="navbar" aria-label="Main">
+  <div class="brand">
+    <h1>ConDex</h1><span class="tag">Test console</span>
   </div>
-  <div class="buttons">
-    <button class="primary" id="run-all"><span class="dot"></span>Run every button</button>
+  <div class="nav-right">
+    <button id="run-all" title="Reset the data, then click every test button in order"><span class="dot"></span><span>Run <span class="long">every button</span></span></button>
+    <div class="wallet">
+      <button class="primary" id="wallet-btn" aria-haspopup="dialog" aria-controls="wallet-menu" aria-expanded="false">Connect wallet</button>
+      <div class="wallet-menu" id="wallet-menu" hidden>
+        <div class="menu-account"><b id="menu-account"></b><span id="menu-check"></span></div>
+        <button id="menu-mcp">Create an MCP key</button>
+        <button id="menu-switch">Switch wallet…</button>
+        <button id="menu-disconnect">Disconnect</button>
+      </div>
+    </div>
   </div>
-</header>
+</nav>
+<div class="notice" id="notice" role="status" hidden><span id="notice-text"></span><button id="notice-close" aria-label="Dismiss notice">✕</button></div>
+<div class="subbar">
+  <span>Every button calls the off-chain API and checks its own expected result.</span>
+  <span>Ledger <span id="ledger-kind" class="tag">?</span></span>
+  <span>Venue <span id="venue-kind" class="tag">?</span></span>
+  <span>Wallet key check <span id="keycheck-kind" class="tag">?</span></span>
+  <span>Storage <span id="storage-kind" class="tag">?</span></span>
+</div>
+
+<dialog id="connect-dialog" aria-labelledby="connect-title">
+  <form method="dialog" class="dialog-head">
+    <h2 id="connect-title">Connect wallet</h2>
+    <button value="close" aria-label="Close">✕</button>
+  </form>
+  <div class="dialog-body" id="connect-choices">
+    <button class="choice" data-choice="local" id="choice-local" hidden><b>My NEAR wallet on this computer</b><span>One click. ConDex asks near-cli to sign in with the key it keeps in this computer's keychain. Nothing is sent on-chain and it costs nothing.</span></button>
+    <button class="choice" data-choice="cli"><b>My NEAR wallet, copy and paste</b><span>Run a near-cli command yourself and paste what it prints. Use this when ConDex runs on a different computer from your wallet.</span></button>
+    <button class="choice" data-choice="test"><b>Test wallet</b><span>A made-up account with a throwaway key, for trying things out. Works only while the server skips the on-chain key check (dev mode).</span></button>
+  </div>
+  <div class="dialog-body" id="local-flow" hidden>
+    <label>Your testnet account<input id="local-account" placeholder="yourname.testnet" autocomplete="off" spellcheck="false"></label>
+    <p class="small">The account you imported into near-cli. ConDex remembers it, so next time Connect wallet connects in one click.</p>
+    <div class="row"><button class="primary" id="local-connect">Connect</button><button data-back>Other ways to connect</button></div>
+    <p class="msg" id="local-msg" role="alert"></p>
+  </div>
+  <div class="dialog-body" id="cli-flow" hidden>
+    <label>Your testnet account<input id="cli-account" placeholder="yourname.testnet" autocomplete="off" spellcheck="false"></label>
+    <div class="row"><button class="primary" id="cli-get">Get sign-in command</button><button data-back>Back</button></div>
+    <div id="cli-step2" class="dialog-body" style="padding:0" hidden>
+      <p><span class="step">1.</span> Run this in your terminal <span class="small" id="cli-expiry"></span></p>
+      <pre class="cmd" id="cli-cmd"></pre>
+      <div class="row"><button id="cli-copy">Copy command</button><span class="small">If near-cli says the key isn't in your keychain, change <code>sign-with-keychain</code> to <code>sign-with-legacy-keychain</code>.</span></div>
+      <p><span class="step">2.</span> Paste what it printed (the part in curly braces with <code>accountId</code>, <code>publicKey</code> and <code>signature</code>)</p>
+      <textarea id="cli-output" style="min-height:90px" placeholder='{ "accountId": "...", "publicKey": "ed25519:...", "signature": "ed25519:..." }' spellcheck="false"></textarea>
+      <div class="row"><button class="primary" id="cli-connect">Connect</button></div>
+    </div>
+    <p class="msg" id="cli-msg" role="alert"></p>
+  </div>
+  <div class="dialog-body" id="test-flow" hidden>
+    <label>Account name<input id="test-account" value="me.testnet" autocomplete="off" spellcheck="false"></label>
+    <div class="row"><button class="primary" id="test-connect">Connect test wallet</button><button data-back>Back</button></div>
+    <p class="msg" id="test-msg" role="alert"></p>
+  </div>
+</dialog>
+
+<dialog id="mcp-dialog" aria-labelledby="mcp-title">
+  <form method="dialog" class="dialog-head">
+    <h2 id="mcp-title">MCP key created</h2>
+    <button value="close" aria-label="Close">✕</button>
+  </form>
+  <div class="dialog-body">
+    <p>This key is shown once. It lets an agent publish, read and trade as <b id="mcp-account"></b>. <span id="mcp-lifetime"></span></p>
+    <pre class="cmd" id="mcp-key"></pre>
+    <p>Add it to Claude Code by running these two lines in your terminal (PowerShell, cmd or bash):</p>
+    <pre class="cmd" id="mcp-cmd"></pre>
+    <div class="row"><button id="mcp-copy">Copy commands</button></div>
+    <p class="small">The first line removes an older <code>condex</code> entry; it's fine if it says none was found. Then reconnect in Claude Code with <code>/mcp</code>, or restart it.</p>
+  </div>
+</dialog>
 
 <div class="layout">
   <main id="sections"></main>
@@ -112,8 +212,8 @@
 
 // ---------------------------------------------------------------- state
 const STATE_FIELDS = [
-  ["aliceOwner", "Alice owner key"], ["alicePublish", "Alice publish key"],
-  ["bobOwner", "Bob owner key"], ["bobRead", "Bob read key"], ["bobTrade", "Bob trade key"],
+  ["aliceSession", "Alice wallet session"], ["alicePublish", "Alice publish key"],
+  ["bobSession", "Bob wallet session"], ["bobRead", "Bob read key"], ["bobTrade", "Bob trade key"],
   ["insightId", "Insight id"], ["tokenId", "Token id"], ["quoteId", "Quote id"], ["orderId", "Order id"],
   ["lastFillEventId", "Last fill event"], ["receiptId", "Receipt id"], ["execSecret", "Execution secret"],
 ];
@@ -138,9 +238,15 @@ function log(method, path, status, body, sent) {
   s.innerHTML = `<b class="${cls}">${status}</b> <span>${method}</span> <span></span>`;
   s.lastElementChild.textContent = path;
   const pre = document.createElement("pre");
-  pre.textContent = (sent !== undefined ? "→ " + JSON.stringify(sent, null, 2) + "\n\n" : "") + "← " + JSON.stringify(body, null, 2);
+  pre.textContent = (sent !== undefined ? "→ " + JSON.stringify(sent, redactSecrets, 2) + "\n\n" : "") + "← " + JSON.stringify(body, redactSecrets, 2);
   d.append(s, pre);
   logEl.prepend(d);
+}
+
+/** The log is often on screen during demos, so session tokens and API keys are shortened in it. */
+function redactSecrets(name, value) {
+  if ((name === "token" || name === "secret") && typeof value === "string" && value.length > 12) return value.slice(0, 10) + "…";
+  return value;
 }
 
 async function call(method, path, { key, body, secret } = {}) {
@@ -148,7 +254,15 @@ async function call(method, path, { key, body, secret } = {}) {
   if (key) headers.authorization = "Bearer " + key;
   if (secret) headers["x-execution-secret"] = secret;
   if (body !== undefined) headers["content-type"] = "application/json";
-  const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  } catch {
+    // Server stopped or restarting (npm run dev restarts on every save): answer like an error response.
+    const unreachable = { error: { code: "unreachable", message: "Can't reach the ConDex server. Is it running?" } };
+    log(method, path, "—", unreachable, body);
+    return { status: 0, body: unreachable };
+  }
   const text = await res.text();
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
@@ -178,6 +292,45 @@ async function refreshBalances() {
   document.getElementById("bal-alice-earned").textContent = alice.earned.near;
   return { bob, alice };
 }
+
+// ---------------------------------------------------------------- dev wallet
+// Does in the browser what a NEAR wallet does on "Connect wallet": signs the NEP-413 challenge with ed25519.
+// The server always verifies the signature. Whether the key really belongs to the account is only
+// checked on chain when the server runs with CONDEX_WALLET_KEY_CHECK=near-rpc.
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function base58(bytes) {
+  let n = 0n; for (const b of bytes) n = n * 256n + BigInt(b);
+  let out = ""; while (n > 0n) { out = B58[Number(n % 58n)] + out; n /= 58n; }
+  for (const b of bytes) { if (b !== 0) break; out = "1" + out; }
+  return out;
+}
+const concatBytes = (...arrs) => { const out = new Uint8Array(arrs.reduce((s, a) => s + a.length, 0)); let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; } return out; };
+const u32le = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, true); return b; };
+const borshStr = (s) => { const e = new TextEncoder().encode(s); return concatBytes(u32le(e.length), e); };
+const b64ToBytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const bytesToB64 = (b) => btoa(String.fromCharCode(...b));
+const devKeys = {};
+
+async function devWalletSign(accountId, ch) {
+  devKeys[accountId] ??= await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
+  const pub = new Uint8Array(await crypto.subtle.exportKey("raw", devKeys[accountId].publicKey));
+  const payload = concatBytes(u32le(2 ** 31 + 413), borshStr(ch.message), b64ToBytes(ch.nonce), borshStr(ch.recipient), new Uint8Array([0]));
+  const hash = await crypto.subtle.digest("SHA-256", payload);
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, devKeys[accountId].privateKey, hash));
+  return { public_key: "ed25519:" + base58(pub), signature: bytesToB64(sig) };
+}
+
+async function connectDevWallet(accountId, displayName) {
+  const ch = expectStatus(await call("POST", "/v1/auth/challenge"), 201);
+  const signed = await devWalletSign(accountId, ch);
+  const body = { account_id: accountId, ...signed, nonce: ch.nonce, display_name: displayName };
+  const res = await call("POST", "/v1/auth/verify", { body });
+  if (res.status === 401 && KEY_CHECK === "near-rpc") {
+    throw new Fail("The server checks keys on NEAR (near-rpc), so a test wallet cannot sign in. Use Connect wallet → My NEAR wallet (near-cli) with a real testnet account.");
+  }
+  return { b: expectStatus(res, 201), body };
+}
+let KEY_CHECK = "?";
 
 // ---------------------------------------------------------------- reusable steps
 function publishBody(titleSuffix = "") {
@@ -213,10 +366,13 @@ async function sim(action, body) {
   return b;
 }
 
+/**
+ * Sets up Alice and Bob without wiping anything: signing in again reuses existing accounts, and keys,
+ * deposits and insights are only added. So your own navbar wallet and MCP key keep working.
+ */
 async function ensureSetup() {
   if (S.alicePublish && S.bobRead && S.bobTrade && S.tokenId) return;
-  await ACTION_BY_ID.reset.run();
-  for (const id of ["createAlice", "createBob", "aliceKeys", "bobKeys", "deposit", "publish"]) await ACTION_BY_ID[id].run();
+  for (const id of ["connectAlice", "connectBob", "aliceKeys", "bobKeys", "deposit", "publish"]) await ACTION_BY_ID[id].run();
 }
 
 async function settleTxCount() {
@@ -235,8 +391,8 @@ function expectEffect(b, effect) {
 // ---------------------------------------------------------------- actions
 const SECTIONS = [
   {
-    title: "1. Setup",
-    hint: "Create the two demo traders. Alice publishes; Bob reads and trades. Bob gets separate read and trade keys.",
+    title: "1. Connect wallets",
+    hint: "Everything except browsing needs a connected NEAR wallet. To connect your own wallet, use Connect wallet at the top right. These buttons connect two test traders instead: they sign the real NEP-413 sign-in message with a throwaway browser key. API keys for agents and MCP can only be issued from a wallet session.",
     fields: `
       <label>Alice NEAR account<input id="f-alice-acct" value="alice.testnet"></label>
       <label>Bob NEAR account<input id="f-bob-acct" value="bob.testnet"></label>
@@ -246,46 +402,69 @@ const SECTIONS = [
         const b = expectStatus(await call("GET", "/health"), 200);
         document.getElementById("ledger-kind").textContent = b.ledger;
         document.getElementById("venue-kind").textContent = b.venue;
-        return `ledger ${b.ledger}, venue ${b.venue}`;
+        document.getElementById("keycheck-kind").textContent = `${b.wallet_key_check} (${b.near_network})`;
+        document.getElementById("storage-kind").textContent = b.storage === "memory" ? "memory — resets when the server restarts" : "file";
+        KEY_CHECK = b.wallet_key_check;
+        STORAGE = b.storage;
+        if (b.mcp_server) MCP_SERVER_PATH = b.mcp_server;
+        return `ledger ${b.ledger}, venue ${b.venue}, wallet key check ${b.wallet_key_check}, storage ${b.storage}`;
       } },
       { id: "reset", label: "Reset all data", run: async () => {
         expectStatus(await call("POST", "/v1/dev/reset"), 200);
         for (const [k] of STATE_FIELDS) if (k !== "execSecret") S[k] = "";
+        if (WALLET) signedOut("Reset all data signed your wallet out and revoked its MCP keys. Connect again to make a new key.");
         await refreshBalances();
         return "database wiped";
       } },
-      { id: "createAlice", label: "Create Alice (creator)", run: async () => {
-        const b = expectStatus(await call("POST", "/v1/accounts", { body: { near_account_id: val("f-alice-acct"), display_name: "Alice" } }), 201);
-        S.aliceOwner = b.owner_key.secret;
-        return `account ${b.account.id}`;
+      { id: "connectAlice", label: "Connect Alice's wallet (creator)", run: async () => {
+        const { b } = await connectDevWallet(val("f-alice-acct"), "Alice");
+        S.aliceSession = b.session.token;
+        return `${b.new_account ? "new account" : "signed in"} ${b.account.near_account_id} with ${b.session.wallet_public_key.slice(0, 20)}…`;
       } },
-      { id: "createBob", label: "Create Bob (borrower)", run: async () => {
-        const b = expectStatus(await call("POST", "/v1/accounts", { body: { near_account_id: val("f-bob-acct"), display_name: "Bob" } }), 201);
-        S.bobOwner = b.owner_key.secret;
-        return `account ${b.account.id}`;
+      { id: "connectBob", label: "Connect Bob's wallet (borrower)", run: async () => {
+        const { b } = await connectDevWallet(val("f-bob-acct"), "Bob");
+        S.bobSession = b.session.token;
+        return `${b.new_account ? "new account" : "signed in"} ${b.account.near_account_id}`;
+      } },
+      { id: "replaySignIn", label: "Reuse a signed challenge (expect 401)", run: async () => {
+        const { body } = await connectDevWallet(val("f-bob-acct"), "Bob");
+        return expectStatus(await call("POST", "/v1/auth/verify", { body }), 401).error.message;
+      } },
+      { id: "forgedSignIn", label: "Sign in with a forged signature (expect 401)", run: async () => {
+        const ch = expectStatus(await call("POST", "/v1/auth/challenge"), 201);
+        const signed = await devWalletSign(val("f-bob-acct"), ch);
+        const forged = { ...signed, signature: bytesToB64(new Uint8Array(64).fill(1)) };
+        return expectStatus(await call("POST", "/v1/auth/verify", { body: { account_id: val("f-bob-acct"), ...forged, nonce: ch.nonce } }), 401).error.message;
       } },
       { id: "aliceKeys", label: "Issue Alice's publish key", run: async () => {
-        const b = expectStatus(await call("POST", "/v1/keys", { key: need("aliceOwner", "Create Alice"), body: { scopes: ["publish"], label: "Alice's agent" } }), 201);
+        const b = expectStatus(await call("POST", "/v1/keys", { key: need("aliceSession", "Connect Alice's wallet"), body: { scopes: ["publish"], label: "Alice's agent" } }), 201);
         S.alicePublish = b.secret;
         return `scopes ${b.scopes.join(",")}`;
       } },
       { id: "bobKeys", label: "Issue Bob's read + trade keys", run: async () => {
-        const owner = need("bobOwner", "Create Bob");
+        const owner = need("bobSession", "Connect Bob's wallet");
         S.bobRead = expectStatus(await call("POST", "/v1/keys", { key: owner, body: { scopes: ["read"], label: "Bob research agent" } }), 201).secret;
         S.bobTrade = expectStatus(await call("POST", "/v1/keys", { key: owner, body: { scopes: ["trade"], label: "Bob trading agent" } }), 201).secret;
         return "read key and trade key issued";
       } },
       { id: "whoami", label: "Who am I (Bob read key)", run: async () => {
         const b = expectStatus(await call("GET", "/v1/me", { key: need("bobRead", "Issue Bob's keys") }), 200);
-        expect(b.key.scopes.join() === "read", "read key should only have the read scope");
-        return `${b.account.near_account_id}, scopes ${b.key.scopes}`;
+        expect(b.credential.type === "api_key" && b.credential.scopes.join() === "read", "read key should only have the read scope");
+        return `${b.account.near_account_id}, ${b.credential.type}, scopes ${b.credential.scopes}`;
+      } },
+      { id: "keyFromApiKey", label: "Issue a key using an API key (expect 403)", run: async () => {
+        return expectStatus(await call("POST", "/v1/keys", { key: need("bobRead", "Issue Bob's keys"), body: { scopes: ["trade"] } }), 403).error.code;
+      } },
+      { id: "rename", label: "Set Bob's display name", run: async () => {
+        const b = expectStatus(await call("PATCH", "/v1/me", { key: need("bobSession", "Connect Bob's wallet"), body: { display_name: "Bob" } }), 200);
+        return `display name: ${b.display_name}`;
       } },
       { id: "listKeys", label: "List Bob's keys", run: async () => {
-        const b = expectStatus(await call("GET", "/v1/keys", { key: need("bobOwner", "Create Bob") }), 200);
+        const b = expectStatus(await call("GET", "/v1/keys", { key: need("bobSession", "Connect Bob's wallet") }), 200);
         return `${b.keys.length} keys`;
       } },
       { id: "deposit", label: "Deposit test NEAR for Bob", run: async () => {
-        const b = expectStatus(await call("POST", "/v1/ledger/deposit", { key: need("bobOwner", "Create Bob"), body: { amount_near: val("f-deposit") } }), 201);
+        const b = expectStatus(await call("POST", "/v1/ledger/deposit", { key: need("bobSession", "Connect Bob's wallet"), body: { amount_near: val("f-deposit") } }), 201);
         return `Bob available ${b.available.near} NEAR`;
       } },
     ],
@@ -323,18 +502,38 @@ const SECTIONS = [
     ],
   },
   {
-    title: "3. Browse and read (borrower's agent)",
-    hint: "Previews are public. The full conversation needs a read key and is always free.",
+    title: "3. Visitor without a wallet",
+    hint: "No credentials at all. A visitor can see publisher details and insight previews; everything else asks them to connect a wallet.",
     actions: [
-      { id: "listTokens", label: "List tokens (public)", run: async () => {
+      { id: "visitorPublisher", label: "View Alice's publisher page", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/publishers/${val("f-alice-acct")}`), 200);
+        expect(b.tokens.every((t) => t.messages === undefined), "publisher page must not include messages");
+        return `${b.publisher.display_name}: ${b.stats.insights} insights, ${b.stats.reads} reads, ${b.stats.filled_orders} filled orders, earned ${b.stats.fees_earned.near} NEAR`;
+      } },
+      { id: "listTokens", label: "List insight previews", run: async () => {
         const b = expectStatus(await call("GET", "/v1/tokens"), 200);
         return `${b.tokens.length} tokens`;
       } },
-      { id: "preview", label: "Preview token (public)", run: async () => {
+      { id: "preview", label: "Preview one token", run: async () => {
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}/preview`), 200);
         expect(b.messages === undefined, "preview must not include the messages");
         return `${b.message_count} messages hidden, fee ${b.fee_per_filled_order.near} NEAR per filled order`;
       } },
+      { id: "readNoKey", label: "Read the conversation (expect 401)", run: async () => {
+        return expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`), 401).error.message;
+      } },
+      { id: "visitorKeys", label: "Create an API key for MCP (expect 401)", run: async () => {
+        return expectStatus(await call("POST", "/v1/keys", { body: { scopes: ["read"] } }), 401).error.code;
+      } },
+      { id: "visitorTrade", label: "Get a fee quote (expect 401)", run: async () => {
+        return expectStatus(await call("POST", "/v1/quotes", { body: { token_id: need("tokenId", "Publish an insight") } }), 401).error.code;
+      } },
+    ],
+  },
+  {
+    title: "4. Read (wallet connected)",
+    hint: "The full conversation needs a read-scoped key or a wallet session, and is always free.",
+    actions: [
       { id: "read", label: "Read insight (Bob)", run: async () => {
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
         expect(b.charge.yocto === "0", "reading must cost nothing");
@@ -348,13 +547,10 @@ const SECTIONS = [
       { id: "readWithTradeKey", label: "Read with trade key (expect 403)", run: async () => {
         return expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobTrade", "Issue Bob's keys") }), 403).error.code;
       } },
-      { id: "readNoKey", label: "Read without a key (expect 401)", run: async () => {
-        return expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`), 401).error.code;
-      } },
     ],
   },
   {
-    title: "4. Linked trade",
+    title: "5. Linked trade",
     hint: "Bob quotes the fee, then authorises reserving it. The order is submitted to the venue only after the reserve.",
     fields: `
       <label>Side<select id="f-side"><option>sell</option><option>buy</option></select></label>
@@ -369,7 +565,7 @@ const SECTIONS = [
         return expectStatus(await call("POST", "/v1/quotes", { key: need("bobRead", "Issue Bob's keys"), body: { token_id: need("tokenId", "Publish an insight") } }), 403).error.code;
       } },
       { id: "quoteSelfLink", label: "Alice quotes her own insight (expect 403)", run: async () => {
-        return expectStatus(await call("POST", "/v1/quotes", { key: need("aliceOwner", "Create Alice"), body: { token_id: need("tokenId", "Publish an insight") } }), 403).error.code;
+        return expectStatus(await call("POST", "/v1/quotes", { key: need("aliceSession", "Connect Alice's wallet"), body: { token_id: need("tokenId", "Publish an insight") } }), 403).error.code;
       } },
       { id: "placeOrder", label: "Authorise fee + place order", run: async () => {
         const b = await newOrder();
@@ -392,7 +588,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: "5. Simulated venue (execution evidence)",
+    title: "6. Simulated venue (execution evidence)",
     hint: "Drives the current order. The first fill pays Alice once; nothing else pays again. Evidence is labelled \"simulated\".",
     fields: `
       <label>Fill quantity<input id="f-fill-qty" value="0.5"></label>
@@ -446,7 +642,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: "6. Ledger and receipts",
+    title: "7. Ledger and receipts",
     hint: "The mock ledger stands in for the NEAR contract until it is deployed. Every call writes a pseudo-transaction.",
     actions: [
       { id: "bobBalance", label: "Bob's balance", run: async () => {
@@ -467,7 +663,7 @@ const SECTIONS = [
         return `${expectStatus(await call("GET", "/v1/receipts", { key: need("bobTrade", "Issue Bob's keys") }), 200).receipts.length} receipts`;
       } },
       { id: "receiptsAlice", label: "Alice's receipts", run: async () => {
-        return `${expectStatus(await call("GET", "/v1/receipts", { key: need("aliceOwner", "Create Alice") }), 200).receipts.length} receipts`;
+        return `${expectStatus(await call("GET", "/v1/receipts", { key: need("aliceSession", "Connect Alice's wallet") }), 200).receipts.length} receipts`;
       } },
       { id: "getReceipt", label: "Get last receipt", run: async () => {
         const b = expectStatus(await call("GET", `/v1/receipts/${need("receiptId", "Fill an order")}`), 200);
@@ -476,20 +672,29 @@ const SECTIONS = [
     ],
   },
   {
-    title: "7. Key management",
+    title: "8. Keys and sessions",
     actions: [
       { id: "revokeKey", label: "Issue + revoke a temporary key", run: async () => {
-        const owner = need("bobOwner", "Create Bob");
+        const owner = need("bobSession", "Connect Bob's wallet");
         const k = expectStatus(await call("POST", "/v1/keys", { key: owner, body: { scopes: ["read"], label: "temporary" } }), 201);
         expectStatus(await call("GET", "/v1/me", { key: k.secret }), 200);
         expectStatus(await call("DELETE", `/v1/keys/${k.id}`, { key: owner }), 200);
         expectStatus(await call("GET", "/v1/me", { key: k.secret }), 401);
         return "key worked, then returned 401 after revocation";
       } },
+      { id: "signOut", label: "Sign Bob out, then reconnect", run: async () => {
+        const old = need("bobSession", "Connect Bob's wallet");
+        expectStatus(await call("POST", "/v1/auth/logout", { key: old }), 200);
+        expectStatus(await call("GET", "/v1/keys", { key: old }), 401);
+        expectStatus(await call("GET", "/v1/me", { key: need("bobRead", "Issue Bob's keys") }), 200);
+        const { b } = await connectDevWallet(val("f-bob-acct"), "Bob");
+        S.bobSession = b.session.token;
+        return "old session refused; agent API keys kept working; signed back in";
+      } },
     ],
   },
   {
-    title: "8. README demo checklist",
+    title: "9. README demo checklist",
     hint: "One click per checklist item. Each sets up what it needs and checks balances before and after.",
     actions: [
       { id: "demo1", label: "① Publish + mint token", run: async () => {
@@ -569,6 +774,7 @@ for (const sec of SECTIONS) {
     ACTION_BY_ID[a.id] = a;
     const btn = document.createElement("button");
     btn.dataset.action = a.id;
+    if (sec.manual) btn.dataset.manual = "true";
     btn.innerHTML = '<span class="dot"></span><span></span>';
     btn.lastElementChild.textContent = a.label;
     btn.addEventListener("click", () => pending.set(btn, runButton(btn, a)));
@@ -611,7 +817,7 @@ async function runAll() {
   const results = [];
   STRICT = true;
   try {
-    for (const btn of document.querySelectorAll("button[data-action]")) {
+    for (const btn of document.querySelectorAll("button[data-action]:not([data-manual])")) {
       btn.click();
       const r = await pending.get(btn);
       const label = ACTION_BY_ID[btn.dataset.action].label;
@@ -637,6 +843,353 @@ async function runAll() {
   return out;
 }
 document.getElementById("run-all").addEventListener("click", () => runAll());
+
+// ---------------------------------------------------------------- navbar: connect wallet
+const NEAR_ACCOUNT_RE = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
+const isNearAccount = (a) => a.length >= 2 && a.length <= 64 && NEAR_ACCOUNT_RE.test(a);
+const walletBtn = document.getElementById("wallet-btn");
+const walletMenu = document.getElementById("wallet-menu");
+const connectDialog = document.getElementById("connect-dialog");
+const mcpDialog = document.getElementById("mcp-dialog");
+let WALLET = null;            // { token, account, keyCheck } once connected
+let pendingCliChallenge = null;
+let MCP_SERVER_PATH = "<path to ConDex>/src/mcp/server.ts";
+let NEAR_CLI_AVAILABLE = false; // the server can sign in with this computer's near-cli wallet
+let STORAGE = "memory";         // from /health: "memory" or "file"
+let connecting = false;         // one sign-in at a time, so double clicks cannot open two sessions
+const REMEMBERED_ACCOUNT = "condex.nearCliAccount";
+const SESSION_ENDED = "Your wallet session ended: the server restarted or its data was reset. Click Connect wallet to reconnect.";
+
+const noticeEl = document.getElementById("notice");
+/** Messages the user must see even when the request log is off-screen (e.g. on a phone). */
+function showNotice(text) {
+  document.getElementById("notice-text").textContent = text;
+  noticeEl.hidden = false;
+}
+function hideNotice() { noticeEl.hidden = true; }
+document.getElementById("notice-close").addEventListener("click", hideNotice);
+
+function rememberedAccount() {
+  try { return localStorage.getItem(REMEMBERED_ACCOUNT); } catch { return null; }
+}
+function rememberAccount(account) {
+  try { localStorage.setItem(REMEMBERED_ACCOUNT, account); } catch { /* the user just types it again next time */ }
+}
+
+function saveWallet() {
+  try {
+    if (WALLET) sessionStorage.setItem("condex.wallet", JSON.stringify(WALLET));
+    else sessionStorage.removeItem("condex.wallet");
+  } catch { /* storage unavailable: stay connected for this page view only */ }
+}
+
+function renderWallet() {
+  walletBtn.disabled = false;
+  const localConnect = document.getElementById("local-connect");
+  localConnect.disabled = false;
+  localConnect.textContent = "Connect";
+  if (WALLET) {
+    walletBtn.className = "";
+    walletBtn.innerHTML = '<span class="dot pass" aria-hidden="true"></span><span class="acct"></span><span aria-hidden="true">▾</span>';
+    walletBtn.querySelector(".acct").textContent = WALLET.account;
+    walletBtn.setAttribute("aria-haspopup", "true");
+    walletBtn.setAttribute("aria-label", `Wallet connected as ${WALLET.account}. Open wallet menu`);
+    document.getElementById("menu-account").textContent = WALLET.account;
+    document.getElementById("menu-check").textContent = WALLET.keyCheck === "near-rpc"
+      ? "Key confirmed on NEAR"
+      : "Signature checked; key ownership not checked (dev mode)";
+  } else {
+    walletBtn.className = "primary";
+    walletBtn.textContent = "Connect wallet";
+    walletBtn.setAttribute("aria-haspopup", "dialog");
+    walletBtn.removeAttribute("aria-label");
+    closeWalletMenu();
+  }
+}
+
+function openWalletMenu() { walletMenu.hidden = false; walletBtn.setAttribute("aria-expanded", "true"); walletMenu.querySelector("button").focus(); }
+function closeWalletMenu() { walletMenu.hidden = true; walletBtn.setAttribute("aria-expanded", "false"); }
+
+/**
+ * Data lives in memory, so a server restart ends every session. Re-check before trusting the stored
+ * session; if it is gone, sign out and say so where the user is looking.
+ */
+async function sessionStillValid() {
+  if (!WALLET) return false;
+  const res = await call("GET", "/v1/me", { key: WALLET.token });
+  if (res.status === 200) return true;
+  if (res.status === 401) signedOut(SESSION_ENDED);
+  else showNotice(res.body?.error?.message ?? `Could not check your wallet session (HTTP ${res.status}).`);
+  return false;
+}
+let lastSessionCheck = 0;
+async function recheckSession() {
+  if (!WALLET || connecting || Date.now() - lastSessionCheck < 2000) return;
+  lastSessionCheck = Date.now();
+  await sessionStillValid();
+}
+window.addEventListener("focus", recheckSession);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") recheckSession(); });
+
+walletBtn.addEventListener("click", async () => {
+  if (WALLET) {
+    if (!walletMenu.hidden) { closeWalletMenu(); return; }
+    if (await sessionStillValid()) openWalletMenu();
+    return;
+  }
+  // One click: reconnect the near-cli account used last time. Otherwise ask for it once.
+  const remembered = rememberedAccount();
+  if (NEAR_CLI_AVAILABLE && remembered) connectWithNearCli(remembered);
+  else openConnectDialog(NEAR_CLI_AVAILABLE ? "local" : null);
+});
+
+/** Signs in with this computer's near-cli wallet: the server asks near-cli to sign ConDex's challenge. */
+async function connectWithNearCli(account) {
+  if (connecting) return;
+  connecting = true;
+  walletBtn.disabled = true;
+  walletBtn.textContent = "Connecting…";
+  const localConnect = document.getElementById("local-connect");
+  localConnect.disabled = true;
+  localConnect.textContent = "Connecting…";
+  document.getElementById("local-msg").textContent = "";
+  try {
+    const res = await call("POST", "/v1/dev/wallet/near-cli", { body: { account_id: account } });
+    if (res.status === 201) {
+      rememberAccount(res.body.account.near_account_id);
+      connected(res.body);
+      return;
+    }
+    // Show what went wrong where the account can be corrected.
+    openConnectDialog("local");
+    document.getElementById("local-account").value = account;
+    document.getElementById("local-msg").textContent = res.body?.error?.message ?? `Could not connect (HTTP ${res.status}).`;
+  } finally {
+    connecting = false;
+    renderWallet();
+  }
+}
+document.addEventListener("click", (e) => { if (!walletMenu.hidden && !e.target.closest(".wallet")) closeWalletMenu(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !walletMenu.hidden) { closeWalletMenu(); walletBtn.focus(); }
+});
+// Close the menu when keyboard focus leaves it (e.g. tabbing past the last item).
+document.querySelector(".wallet").addEventListener("focusout", (e) => {
+  if (!walletMenu.hidden && !e.currentTarget.contains(e.relatedTarget)) closeWalletMenu();
+});
+
+function showConnectStep(step) {
+  document.getElementById("connect-choices").hidden = step !== null;
+  document.getElementById("local-flow").hidden = step !== "local";
+  document.getElementById("cli-flow").hidden = step !== "cli";
+  document.getElementById("test-flow").hidden = step !== "test";
+  for (const id of ["local-msg", "cli-msg", "test-msg"]) document.getElementById(id).textContent = "";
+  if (step === "local" && !document.getElementById("local-account").value) {
+    document.getElementById("local-account").value = rememberedAccount() ?? "";
+  }
+  const focusId = { local: "local-account", cli: "cli-account", test: "test-account" }[step];
+  (focusId ? document.getElementById(focusId) : connectDialog.querySelector("[data-choice]:not([hidden])")).focus();
+}
+function openConnectDialog(step = null) {
+  if (!connectDialog.open) connectDialog.showModal();
+  showConnectStep(step);
+}
+
+document.getElementById("local-connect").addEventListener("click", () => {
+  const account = document.getElementById("local-account").value.trim().toLowerCase();
+  if (!isNearAccount(account)) {
+    document.getElementById("local-msg").textContent = "Enter your NEAR account, for example yourname.testnet.";
+    return;
+  }
+  connectWithNearCli(account);
+});
+document.getElementById("local-account").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("local-connect").click();
+});
+for (const b of document.querySelectorAll("[data-choice]")) b.addEventListener("click", () => showConnectStep(b.dataset.choice));
+for (const b of document.querySelectorAll("[data-back]")) b.addEventListener("click", () => showConnectStep(null));
+
+function connected(b) {
+  const previous = WALLET?.token;
+  WALLET = { token: b.session.token, account: b.account.near_account_id, keyCheck: b.session.key_check };
+  // Never leave an older session open behind the one now shown.
+  if (previous && previous !== WALLET.token) call("POST", "/v1/auth/logout", { key: previous });
+  saveWallet();
+  renderWallet();
+  hideNotice();
+  connectDialog.close();
+  walletBtn.focus();
+}
+
+function signedOut(reason) {
+  WALLET = null;
+  saveWallet();
+  renderWallet();
+  if (reason) {
+    log("INFO", reason, "–", { info: reason });
+    showNotice(reason);
+  }
+}
+
+async function copyText(sourceEl, btn, label) {
+  try {
+    await navigator.clipboard.writeText(sourceEl.textContent);
+    btn.textContent = "Copied";
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents(sourceEl);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    btn.textContent = "Press Ctrl+C to copy";
+  }
+  setTimeout(() => { btn.textContent = label; }, 2000);
+}
+
+// My NEAR wallet (near-cli): sign the challenge in the terminal, paste the JSON it prints.
+document.getElementById("cli-get").addEventListener("click", async () => {
+  const msg = document.getElementById("cli-msg");
+  msg.textContent = "";
+  const account = document.getElementById("cli-account").value.trim().toLowerCase();
+  if (!isNearAccount(account)) { msg.textContent = "Enter your NEAR account, for example yourname.testnet."; return; }
+  const res = await call("POST", "/v1/auth/challenge");
+  if (res.status !== 201) { msg.textContent = res.body?.error?.message ?? `Could not start sign-in (HTTP ${res.status}).`; return; }
+  const ch = res.body;
+  pendingCliChallenge = { ...ch, account };
+  window.__pendingChallenge = pendingCliChallenge; // read by scripts/check-test-page.ts
+  document.getElementById("cli-cmd").textContent =
+    `near message sign-nep413 utf8 "${ch.message}" nonce "${ch.nonce}" recipient "${ch.recipient}" sign-as ${account} sign-with-keychain network-config ${ch.network}`;
+  document.getElementById("cli-expiry").textContent = `(valid until ${new Date(ch.expires_at).toLocaleTimeString()})`;
+  document.getElementById("cli-output").value = "";
+  document.getElementById("cli-step2").hidden = false;
+  document.getElementById("cli-copy").focus();
+});
+document.getElementById("cli-copy").addEventListener("click", (e) => copyText(document.getElementById("cli-cmd"), e.currentTarget, "Copy command"));
+
+/** near-cli prints {"accountId", "publicKey", "signature"}. Falls back to picking out the two ed25519 values. */
+function parseCliOutput(text) {
+  const block = text.match(/\{[\s\S]*?\}/);
+  if (block) {
+    try {
+      const j = JSON.parse(block[0]);
+      if (typeof j.publicKey === "string" && typeof j.signature === "string") {
+        return { accountId: typeof j.accountId === "string" ? j.accountId.trim() : null, publicKey: j.publicKey.trim(), signature: j.signature.trim() };
+      }
+    } catch { /* not JSON: try the fallback */ }
+  }
+  const values = text.match(/ed25519:[1-9A-HJ-NP-Za-km-z]+/g) ?? [];
+  const publicKey = values.find((v) => v.length < 60);
+  const signature = values.find((v) => v.length >= 60);
+  return publicKey && signature ? { accountId: null, publicKey, signature } : null;
+}
+
+document.getElementById("cli-connect").addEventListener("click", async () => {
+  if (connecting) return;
+  const msg = document.getElementById("cli-msg");
+  msg.textContent = "";
+  if (!pendingCliChallenge) { msg.textContent = "Press Get sign-in command first."; return; }
+  const parsed = parseCliOutput(document.getElementById("cli-output").value);
+  if (!parsed) { msg.textContent = "Paste the part near-cli printed in curly braces. It contains accountId, publicKey and signature."; return; }
+  connecting = true;
+  let res;
+  try {
+    res = await call("POST", "/v1/auth/verify", { body: {
+      account_id: parsed.accountId || pendingCliChallenge.account,
+      public_key: parsed.publicKey,
+      signature: parsed.signature,
+      nonce: pendingCliChallenge.nonce,
+    } });
+  } finally {
+    connecting = false;
+  }
+  if (res.status !== 201) {
+    const why = res.body?.error?.message ?? `Sign-in failed (HTTP ${res.status}).`;
+    msg.textContent = /already used|expired|Unknown sign-in challenge/.test(why) ? `${why} Press Get sign-in command again.` : why;
+    return;
+  }
+  pendingCliChallenge = null;
+  window.__pendingChallenge = null;
+  document.getElementById("cli-step2").hidden = true;
+  connected(res.body);
+});
+
+// Test wallet: throwaway browser key, any account name (dev mode only).
+document.getElementById("test-connect").addEventListener("click", async (e) => {
+  if (connecting) return;
+  const btn = e.currentTarget;
+  const msg = document.getElementById("test-msg");
+  msg.textContent = "";
+  const account = document.getElementById("test-account").value.trim().toLowerCase();
+  if (!isNearAccount(account)) { msg.textContent = "Enter an account name like me.testnet."; return; }
+  connecting = true;
+  btn.disabled = true;
+  try {
+    const { b } = await connectDevWallet(account);
+    connected(b);
+  } catch (err) {
+    msg.textContent = err.message;
+  } finally {
+    connecting = false;
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("menu-mcp").addEventListener("click", async () => {
+  walletBtn.focus(); // move focus out of the menu first, so closing the dialog returns it to the button
+  closeWalletMenu();
+  const res = await call("POST", "/v1/keys", { key: WALLET.token, body: { scopes: ["publish", "read", "trade"], label: "MCP agent" } });
+  if (res.status === 401) { signedOut(SESSION_ENDED); return; }
+  if (res.status !== 201) { showNotice(res.body?.error?.message ?? `Could not create an MCP key (HTTP ${res.status}).`); return; }
+  document.getElementById("mcp-account").textContent = WALLET.account;
+  document.getElementById("mcp-key").textContent = res.body.secret;
+  document.getElementById("mcp-lifetime").textContent = STORAGE === "memory"
+    ? "It stops working when the server restarts or its data is reset, because data is kept in memory."
+    : "It keeps working until it is revoked or the data is reset.";
+  // Two lines, so pasting again after a restart replaces the old key instead of failing with
+  // "already exists". "--" is quoted because Claude's PowerShell launcher drops a bare --.
+  document.getElementById("mcp-cmd").textContent =
+    `claude mcp remove condex\nclaude mcp add condex --env CONDEX_API_KEY=${res.body.secret} --env CONDEX_API_URL=${location.origin} "--" node "${MCP_SERVER_PATH}"`;
+  mcpDialog.showModal();
+});
+document.getElementById("mcp-copy").addEventListener("click", (e) => copyText(document.getElementById("mcp-cmd"), e.currentTarget, "Copy commands"));
+
+document.getElementById("menu-disconnect").addEventListener("click", async () => {
+  const token = WALLET?.token;
+  walletBtn.focus();
+  signedOut();
+  if (token) await call("POST", "/v1/auth/logout", { key: token });
+});
+
+document.getElementById("menu-switch").addEventListener("click", async () => {
+  const token = WALLET?.token;
+  walletBtn.focus(); // so closing the dialog returns focus to the button
+  signedOut();
+  openConnectDialog(null);
+  if (token) await call("POST", "/v1/auth/logout", { key: token });
+});
+
+// Offer one-click sign-in when the server can use this computer's near-cli wallet (dev mode only).
+(async () => {
+  try {
+    const res = await fetch("/v1/dev/wallet/near-cli");
+    NEAR_CLI_AVAILABLE = res.ok && (await res.json()).available === true;
+  } catch { NEAR_CLI_AVAILABLE = false; }
+  document.getElementById("choice-local").hidden = !NEAR_CLI_AVAILABLE;
+})();
+
+// Stay connected across page reloads (until the server restarts, which ends every session).
+(async () => {
+  let stored = null;
+  try { stored = JSON.parse(sessionStorage.getItem("condex.wallet") || "null"); } catch { /* ignore */ }
+  if (stored?.token) {
+    const res = await call("GET", "/v1/me", { key: stored.token });
+    if (res.status === 200 && res.body.credential?.type === "session") WALLET = stored;
+    else {
+      saveWallet();
+      if (res.status === 401) showNotice(SESSION_ENDED);
+    }
+  }
+  renderWallet();
+})();
 
 ACTION_BY_ID.health.run().catch(() => {});
 refreshBalances().catch(() => {});

@@ -1,27 +1,36 @@
 import { randomBytes } from "node:crypto";
 import type { Ctx } from "../context.ts";
-import { transaction } from "../db.ts";
-import { badRequest, conflict, forbidden, notFound, unauthorized } from "../errors.ts";
+import { badRequest, forbidden, notFound, unauthorized } from "../errors.ts";
 import { newId, nowIso, sha256Hex } from "../util.ts";
 
 export const SCOPES = ["admin", "publish", "read", "trade"] as const;
 export type Scope = (typeof SCOPES)[number];
-/** Scopes an owner can put on a new key. `admin` is only on the owner key created with the account. */
+/**
+ * Scopes an API key can carry. `admin` (managing keys) belongs only to a wallet session,
+ * so every API key traces back to a wallet sign-in.
+ */
 export const ISSUABLE_SCOPES = ["publish", "read", "trade"] as const;
 
 export interface AccountRow { id: string; near_account_id: string; display_name: string; created_at: string }
+type KeyCheck = "near-rpc" | "none";
+
 interface KeyRow {
   id: string; account_id: string; key_hash: string; key_prefix: string; label: string; scopes: string;
-  token_ids: string | null; expires_at: string | null; revoked_at: string | null; last_used_at: string | null;
-  created_at: string;
+  token_ids: string | null; key_check: KeyCheck; expires_at: string | null; revoked_at: string | null;
+  last_used_at: string | null; created_at: string;
 }
 
 export interface Principal {
   account: AccountRow;
+  /** "session": signed in with a NEAR wallet on the website. "api_key": an agent key issued from a session. */
+  via: "session" | "api_key";
+  /** API key id or session id. */
   keyId: string;
   scopes: Scope[];
   /** Tokens this key may read; null means any. */
   tokenIds: string[] | null;
+  /** How the wallet sign-in behind this credential was checked. API keys inherit it from their session. */
+  keyCheck: KeyCheck;
 }
 
 const NEAR_ACCOUNT_RE = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
@@ -32,22 +41,12 @@ export function assertNearAccountId(value: string, field = "near_account_id"): v
   }
 }
 
-export function createAccount(ctx: Ctx, input: { nearAccountId: string; displayName: string }) {
-  assertNearAccountId(input.nearAccountId);
-  return transaction(ctx.db, () => {
-    const taken = ctx.db.prepare("SELECT 1 FROM accounts WHERE near_account_id = ?").get(input.nearAccountId);
-    if (taken) throw conflict("account_exists", `${input.nearAccountId} already has a ConDex account`);
-    const account: AccountRow = {
-      id: newId("acct"),
-      near_account_id: input.nearAccountId,
-      display_name: input.displayName,
-      created_at: nowIso(),
-    };
-    ctx.db.prepare("INSERT INTO accounts (id, near_account_id, display_name, created_at) VALUES (?, ?, ?, ?)")
-      .run(account.id, account.near_account_id, account.display_name, account.created_at);
-    const ownerKey = insertKey(ctx, account.id, { scopes: [...SCOPES], label: "owner", tokenIds: null, expiresAt: null });
-    return { account: accountView(account), owner_key: ownerKey };
-  });
+export function updateDisplayName(ctx: Ctx, principal: Principal, displayName: string) {
+  requireSession(principal);
+  const name = displayName.trim();
+  if (!name || name.length > 80) throw badRequest("invalid_display_name", "display_name must be 1-80 characters");
+  ctx.db.prepare("UPDATE accounts SET display_name = ? WHERE id = ?").run(name, principal.account.id);
+  return accountView(getAccount(ctx, principal.account.id));
 }
 
 export function issueKey(
@@ -55,7 +54,7 @@ export function issueKey(
   principal: Principal,
   input: { scopes: Scope[]; label?: string; tokenIds?: string[] | null; expiresInSeconds?: number | null },
 ) {
-  requireScope(principal, "admin");
+  requireSession(principal);
   if (input.scopes.length === 0) throw badRequest("invalid_scopes", "A key needs at least one scope");
   for (const s of input.scopes) {
     if (!(ISSUABLE_SCOPES as readonly string[]).includes(s)) {
@@ -67,21 +66,21 @@ export function issueKey(
     scopes: [...new Set(input.scopes)],
     label: input.label ?? input.scopes.join("+"),
     tokenIds: input.tokenIds?.length ? input.tokenIds : null,
+    keyCheck: principal.keyCheck,
     expiresAt,
   });
 }
 
 export function listKeys(ctx: Ctx, principal: Principal) {
-  requireScope(principal, "admin");
+  requireSession(principal);
   const rows = ctx.db.prepare("SELECT * FROM api_keys WHERE account_id = ? ORDER BY created_at").all(principal.account.id) as unknown as KeyRow[];
   return rows.map(keyView);
 }
 
 export function revokeKey(ctx: Ctx, principal: Principal, keyId: string) {
-  requireScope(principal, "admin");
+  requireSession(principal);
   const row = ctx.db.prepare("SELECT * FROM api_keys WHERE id = ? AND account_id = ?").get(keyId, principal.account.id) as KeyRow | undefined;
   if (!row) throw notFound("API key");
-  if (row.id === principal.keyId) throw badRequest("cannot_revoke_self", "Use a different admin key to revoke this one");
   if (!row.revoked_at) {
     row.revoked_at = nowIso();
     ctx.db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ?").run(row.revoked_at, row.id);
@@ -89,25 +88,66 @@ export function revokeKey(ctx: Ctx, principal: Principal, keyId: string) {
   return keyView(row);
 }
 
+const CONNECT_WALLET = "Connect your NEAR wallet first: sign in on the website, then use the session or an API key it issued.";
+
+/** Accepts a wallet session token (`cdxs_…`) or an API key (`cdx_…`). Anything else is anonymous and gets 401. */
 export function authenticate(ctx: Ctx, rawKey: string | undefined): Principal {
-  if (!rawKey) throw unauthorized();
+  if (!rawKey) throw unauthorized(CONNECT_WALLET);
+  return rawKey.startsWith("cdxs_") ? authenticateSession(ctx, rawKey) : authenticateApiKey(ctx, rawKey);
+}
+
+function authenticateSession(ctx: Ctx, token: string): Principal {
+  const row = ctx.db.prepare("SELECT * FROM sessions WHERE token_hash = ?").get(sha256Hex(token)) as
+    | { id: string; account_id: string; key_check: KeyCheck; expires_at: string; revoked_at: string | null } | undefined;
+  if (!row) throw unauthorized(CONNECT_WALLET);
+  if (row.revoked_at) throw unauthorized("This session has been signed out. Connect your wallet again.");
+  if (row.expires_at <= nowIso()) throw unauthorized("This session has expired. Connect your wallet again.");
+  assertCheckedOnChainIfRequired(ctx, row.key_check);
+  return {
+    account: getAccount(ctx, row.account_id), via: "session", keyId: row.id, scopes: [...SCOPES], tokenIds: null,
+    keyCheck: row.key_check,
+  };
+}
+
+function authenticateApiKey(ctx: Ctx, rawKey: string): Principal {
   const row = ctx.db.prepare("SELECT * FROM api_keys WHERE key_hash = ?").get(sha256Hex(rawKey)) as KeyRow | undefined;
-  if (!row) throw unauthorized();
+  if (!row) throw unauthorized("Invalid API key. " + CONNECT_WALLET);
   if (row.revoked_at) throw unauthorized("This API key has been revoked");
   if (row.expires_at && row.expires_at <= nowIso()) throw unauthorized("This API key has expired");
-  const account = ctx.db.prepare("SELECT * FROM accounts WHERE id = ?").get(row.account_id) as unknown as AccountRow;
+  assertCheckedOnChainIfRequired(ctx, row.key_check);
   ctx.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(nowIso(), row.id);
   return {
-    account,
+    account: getAccount(ctx, row.account_id),
+    via: "api_key",
     keyId: row.id,
     scopes: JSON.parse(row.scopes),
     tokenIds: row.token_ids ? JSON.parse(row.token_ids) : null,
+    keyCheck: row.key_check,
   };
+}
+
+/**
+ * When the server checks wallet keys on NEAR, refuse credentials from sign-ins that skipped that check
+ * (dev mode). They can only exist here if a file store is reused after switching modes.
+ */
+function assertCheckedOnChainIfRequired(ctx: Ctx, keyCheck: KeyCheck): void {
+  if (ctx.accessKeys.mode === "near-rpc" && keyCheck !== "near-rpc") {
+    throw unauthorized(
+      "This credential comes from a sign-in that skipped the on-chain wallet check (dev mode). Connect your wallet again.",
+    );
+  }
 }
 
 export function requireScope(principal: Principal, scope: Scope): void {
   if (!principal.scopes.includes(scope)) {
     throw forbidden("missing_scope", `This API key lacks the "${scope}" scope`);
+  }
+}
+
+/** Managing keys and the profile needs the wallet-signed website session, not an API key. */
+export function requireSession(principal: Principal): void {
+  if (principal.via !== "session") {
+    throw forbidden("wallet_session_required", "Only a wallet-connected website session can do this, not an API key");
   }
 }
 
@@ -126,7 +166,7 @@ export function accountView(a: AccountRow) {
 function insertKey(
   ctx: Ctx,
   accountId: string,
-  k: { scopes: Scope[]; label: string; tokenIds: string[] | null; expiresAt: string | null },
+  k: { scopes: Scope[]; label: string; tokenIds: string[] | null; keyCheck: KeyCheck; expiresAt: string | null },
 ) {
   const secret = `cdx_${randomBytes(24).toString("base64url")}`;
   const row: KeyRow = {
@@ -137,15 +177,16 @@ function insertKey(
     label: k.label,
     scopes: JSON.stringify(k.scopes),
     token_ids: k.tokenIds ? JSON.stringify(k.tokenIds) : null,
+    key_check: k.keyCheck,
     expires_at: k.expiresAt,
     revoked_at: null,
     last_used_at: null,
     created_at: nowIso(),
   };
   ctx.db.prepare(
-    `INSERT INTO api_keys (id, account_id, key_hash, key_prefix, label, scopes, token_ids, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(row.id, row.account_id, row.key_hash, row.key_prefix, row.label, row.scopes, row.token_ids, row.expires_at, row.created_at);
+    `INSERT INTO api_keys (id, account_id, key_hash, key_prefix, label, scopes, token_ids, key_check, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(row.id, row.account_id, row.key_hash, row.key_prefix, row.label, row.scopes, row.token_ids, row.key_check, row.expires_at, row.created_at);
   // The secret is returned once and never stored.
   return { ...keyView(row), secret };
 }

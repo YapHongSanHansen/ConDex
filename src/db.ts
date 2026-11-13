@@ -4,6 +4,9 @@ import { DatabaseSync } from "node:sqlite";
 
 export type Db = DatabaseSync;
 
+/** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
+export const SCHEMA_VERSION = 3;
+
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
 CREATE TABLE IF NOT EXISTS accounts (
@@ -19,12 +22,38 @@ CREATE TABLE IF NOT EXISTS api_keys (
   key_hash      TEXT NOT NULL UNIQUE,
   key_prefix    TEXT NOT NULL,
   label         TEXT NOT NULL,
-  scopes        TEXT NOT NULL,          -- JSON array: admin | publish | read | trade
+  scopes        TEXT NOT NULL,          -- JSON array: publish | read | trade
   token_ids     TEXT,                   -- JSON array; NULL means any token
+  key_check     TEXT NOT NULL,          -- how the issuing wallet sign-in was checked: "near-rpc" or "none"
   expires_at    TEXT,
   revoked_at    TEXT,
   last_used_at  TEXT,
   created_at    TEXT NOT NULL
+);
+
+-- Wallet sign-in --------------------------------------------------------
+-- One-time NEP-413 challenges. The wallet signs { message, nonce, recipient }.
+-- Anyone can request one, so expired rows are pruned and the table is capped (services/auth.ts).
+CREATE TABLE IF NOT EXISTS auth_challenges (
+  nonce       TEXT PRIMARY KEY,         -- base64 of 32 random bytes
+  message     TEXT NOT NULL,
+  recipient   TEXT NOT NULL,
+  expires_at  TEXT NOT NULL,
+  used_at     TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS auth_challenges_expires ON auth_challenges (expires_at);
+
+-- Website sessions, created only by a verified wallet signature.
+CREATE TABLE IF NOT EXISTS sessions (
+  id           TEXT PRIMARY KEY,
+  account_id   TEXT NOT NULL REFERENCES accounts(id),
+  token_hash   TEXT NOT NULL UNIQUE,
+  public_key   TEXT NOT NULL,           -- the wallet key that signed in, "ed25519:..."
+  key_check    TEXT NOT NULL,           -- "near-rpc" or "none" (dev mode)
+  expires_at   TEXT NOT NULL,
+  revoked_at   TEXT,
+  created_at   TEXT NOT NULL
 );
 
 -- Insights (private storage) ------------------------------------------
@@ -57,7 +86,7 @@ CREATE TABLE IF NOT EXISTS reads (
   id               TEXT PRIMARY KEY,
   token_id         TEXT NOT NULL REFERENCES insight_versions(token_id),
   reader_id        TEXT NOT NULL REFERENCES accounts(id),
-  key_id           TEXT NOT NULL REFERENCES api_keys(id),
+  key_id           TEXT NOT NULL,        -- API key id or session id
   charged_yocto    TEXT NOT NULL DEFAULT '0',
   created_at       TEXT NOT NULL
 );
@@ -76,7 +105,7 @@ CREATE TABLE IF NOT EXISTS quotes (
 CREATE TABLE IF NOT EXISTS orders (
   id                 TEXT PRIMARY KEY,
   borrower_id        TEXT NOT NULL REFERENCES accounts(id),
-  key_id             TEXT NOT NULL REFERENCES api_keys(id),
+  key_id             TEXT NOT NULL,      -- API key id or session id
   token_id           TEXT NOT NULL REFERENCES insight_versions(token_id),
   quote_id           TEXT NOT NULL UNIQUE REFERENCES quotes(id),
   market             TEXT NOT NULL,
@@ -162,15 +191,43 @@ CREATE TABLE IF NOT EXISTS ledger_txs (
 const ALL_TABLES = [
   "ledger_txs", "ledger_reserves", "ledger_tokens", "ledger_balances",
   "receipts", "execution_events", "orders", "quotes", "reads",
-  "insight_versions", "insights", "api_keys", "accounts",
+  "insight_versions", "insights", "sessions", "auth_challenges", "api_keys", "accounts",
 ];
 
+/**
+ * Opens the store. ":memory:" (the default) keeps all state inside this process: nothing is written
+ * to disk and it starts empty on every restart. SQLite here is only an in-process table engine; it
+ * gives multi-step operations (reserve a fee + create the order) all-or-nothing rollback.
+ *
+ * A file path (opt-in via CONDEX_DB_PATH) keeps data across restarts. There are no migrations, so a
+ * file written by a build with a different schema is refused rather than half-used.
+ */
 export function openDb(path: string): Db {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+  const inMemory = path === ":memory:";
+  if (!inMemory) mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+  if (!inMemory) {
+    const found = storedSchemaVersion(db);
+    if (found !== null && found !== SCHEMA_VERSION) {
+      db.close();
+      throw new Error(
+        `${path} was written by a different version of ConDex (schema ${found}; this build needs ${SCHEMA_VERSION}). ` +
+        "Delete it to start fresh, or unset CONDEX_DB_PATH to keep data in memory.",
+      );
+    }
+    db.exec("PRAGMA journal_mode = WAL");
+  }
+  db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA);
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   return db;
+}
+
+/** null for a new, empty file; otherwise the stored version (0 means it predates versioning). */
+function storedSchemaVersion(db: Db): number | null {
+  const { n } = db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get() as { n: number };
+  if (n === 0) return null;
+  return (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
 }
 
 /** Deletes every row. Used by the dev reset route and tests. */

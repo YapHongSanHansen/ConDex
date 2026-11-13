@@ -3,7 +3,7 @@ import { after, test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildMcpServer } from "../src/mcp/server.ts";
-import { ETH_MESSAGES, startServer } from "./helpers.ts";
+import { ETH_MESSAGES, connectWallet, startServer } from "./helpers.ts";
 
 const srv = await startServer();
 after(() => srv.close());
@@ -23,11 +23,12 @@ function json(result: unknown) {
 
 test("a creator's agent publishes and a borrower's agent reads and trades over MCP", async () => {
   const { api } = srv;
-  const alice = await api("POST", "/v1/accounts", { body: { near_account_id: "alice-mcp.testnet", display_name: "Alice" } });
-  const bob = await api("POST", "/v1/accounts", { body: { near_account_id: "bob-mcp.testnet", display_name: "Bob" } });
-  const alicePublish = (await api("POST", "/v1/keys", { key: alice.body.owner_key.secret, body: { scopes: ["publish"] } })).body.secret;
-  const bobAgentKey = (await api("POST", "/v1/keys", { key: bob.body.owner_key.secret, body: { scopes: ["read", "trade"] } })).body.secret;
-  await api("POST", "/v1/ledger/deposit", { key: bob.body.owner_key.secret, body: { amount_near: "1" } });
+  // MCP keys can only be issued after connecting a wallet.
+  const aliceSession = (await connectWallet(api, "alice-mcp.testnet")).session;
+  const bobSession = (await connectWallet(api, "bob-mcp.testnet")).session;
+  const alicePublish = (await api("POST", "/v1/keys", { key: aliceSession, body: { scopes: ["publish"] } })).body.secret;
+  const bobAgentKey = (await api("POST", "/v1/keys", { key: bobSession, body: { scopes: ["read", "trade"] } })).body.secret;
+  await api("POST", "/v1/ledger/deposit", { key: bobSession, body: { amount_near: "1" } });
 
   const aliceAgent = await connect(alicePublish);
   const tools = (await aliceAgent.listTools()).tools.map((t) => t.name).sort();
