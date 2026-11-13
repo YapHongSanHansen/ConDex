@@ -1,0 +1,49 @@
+import Link from "next/link";
+
+const COLUMNS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
+  { title: "Product", links: [{ label: "Gallery", href: "/gallery" }, { label: "Publish an insight", href: "/publish" }, { label: "Connect your API", href: "/keys" }, { label: "Payouts", href: "/payouts" }] },
+  { title: "Developers", links: [{ label: "API contract", href: "#api-contract" }, { label: "MCP setup", href: "/keys" }, { label: "Retrieval endpoint", href: "#retrieval" }, { label: "GitHub", href: "#github" }] },
+  { title: "Protocol", links: [{ label: "NEAR testnet", href: "https://testnet.nearblocks.io", external: true }, { label: "Contract (proposed)", href: "#contract" }, { label: "Wallet connector", href: "https://github.com/hot-dao/near-selector", external: true }] },
+  { title: "Legal", links: [{ label: "Disclaimer", href: "#disclaimer" }, { label: "Privacy", href: "#privacy" }, { label: "Terms", href: "#terms" }] },
+];
+
+export function Footer() {
+  return (
+    <footer className="relative mt-24 overflow-hidden border-t border-border">
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 z-0 select-none text-center font-semibold leading-none tracking-tighter" style={{ fontSize: "clamp(110px, 24vw, 380px)", color: "transparent", WebkitTextStroke: "1px color-mix(in srgb, var(--text) 9%, transparent)", maskImage: "linear-gradient(to bottom, transparent 0%, #000 40%, #000 100%)", transform: "translateY(12%)", opacity: 0.7 }}>
+        ConDex
+      </div>
+      <div className="container-wide relative z-10 pt-14 pb-32 md:pb-44">
+        <div className="grid gap-10 lg:grid-cols-[1.4fr_2.6fr]">
+          <div className="space-y-4">
+            <Link href="/" className="inline-block text-[19px] font-semibold tracking-tight">Con<span className="font-light text-muted">Dex</span></Link>
+            <p className="max-w-xs text-sm leading-relaxed text-muted">Borrow trading reasoning from AI chats. The creator is paid only if the trade executes.</p>
+            <p className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 font-mono text-[11px] text-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-text" aria-hidden />NEAR testnet · prototype
+            </p>
+          </div>
+          <nav aria-label="Footer" className="grid grid-cols-2 gap-8 sm:grid-cols-4">
+            {COLUMNS.map((c) => (
+              <div key={c.title} className="space-y-3">
+                <p className="label-caps">{c.title}</p>
+                <ul className="space-y-2 text-sm">
+                  {c.links.map((l) => (
+                    <li key={l.label}>
+                      {l.href.startsWith("/") ? <Link href={l.href} className="text-muted transition-colors hover:text-text">{l.label}</Link>
+                        : <a href={l.href} {...(l.external ? { target: "_blank", rel: "noreferrer" } : {})} className="text-muted transition-colors hover:text-text">{l.label}</a>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </nav>
+        </div>
+
+        <div id="disclaimer" className="mt-12 grid gap-3 border-t border-border py-6 text-xs text-muted md:grid-cols-[1fr_auto] md:items-center">
+          <p className="max-w-3xl leading-relaxed">Insights are reasoning shared by creators, not financial advice. No performance is implied. Trade reports are self-reported and the API is trusted in this prototype. Testnet only: never use real funds.</p>
+          <p className="font-mono">© 2026 ConDex · v0.1.0</p>
+        </div>
+      </div>
+    </footer>
+  );
+}

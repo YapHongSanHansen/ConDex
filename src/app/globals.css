@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+/* Design tokens. One accent. Dark by default; light via [data-theme="light"]. */
+:root {
+  --background: #000000;
+  --surface: #0a0a0c;
+  --surface-2: #121216;
+  --border: #212126;
+  --text: #e8eaf0;
+  --muted: #8f96a8;
+  --accent: #f2f4f8;
+  --accent-fg: #0b0c10;
+  --positive: #f2f4f8;
+  --warning: #e6b450;
+  --danger: #f2706b;
+  --dot: #17171b;
+}
+
+:root[data-theme="light"] {
+  --background: #f6f7fa;
+  --surface: #ffffff;
+  --surface-2: #eef0f5;
+  --border: #d9dde6;
+  --text: #12151c;
+  --muted: #566074;
+  --accent: #12151c;
+  --accent-fg: #ffffff;
+  --positive: #12151c;
+  --warning: #8a5a00;
+  --danger: #b42318;
+  --dot: #e1e4ec;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-positive: var(--positive);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-sans-stack);
+  --font-mono: var(--font-mono-stack);
+}
+
+html { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
+
+body {
+  background-color: var(--background);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: 22px 22px;
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.label-caps {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+:root { --gutter: 20px; }
+@media (min-width: 768px) { :root { --gutter: 48px; } }
+@media (min-width: 1280px) { :root { --gutter: 80px; } }
+
+.container-wide {
+  width: 100%;
+  max-width: 1520px;
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+.bleed { margin-inline: calc(var(--gutter) * -1); }
+
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.marquee-track { animation: marquee 45s linear infinite; width: max-content; }
+.marquee-track:hover { animation-play-state: paused; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  .marquee-track { animation: none; }
+}
+
+@keyframes progress { from { width: 0; } to { width: 100%; } }
+@keyframes flow { to { stroke-dashoffset: -10; } }
