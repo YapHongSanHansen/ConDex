@@ -5,9 +5,9 @@
  * Only ConDex's own challenge is ever signed (the caller chooses the account, never the message),
  * and the route that uses this is dev-mode only and refuses requests from other machines or sites.
  */
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 
 export interface SignedMessage {
   accountId: string;
@@ -77,20 +77,62 @@ export function nearCliErrorText(stderr: string): string {
   return reasons.join(": ");
 }
 
-/** Finds near-cli-rs: CONDEX_NEAR_CLI, then npm's global install on Windows, then `near` on PATH. */
+/**
+ * Finds a runnable near-cli-rs. If CONDEX_NEAR_CLI is set, only that is considered (a binary, or an
+ * npm/pnpm `near` shim, which is followed to the package's real binary). Otherwise: npm's global
+ * install, then every directory on PATH (the binary itself, or the package behind a `near` shim),
+ * then Volta's package folder. Each candidate must answer `--version` with "near-cli-rs", so a legacy
+ * JavaScript `near`, a directory, or a .cmd file that cannot be run directly is never picked.
+ */
 export function findNearCli(env: NodeJS.ProcessEnv = process.env): string | null {
-  if (env.CONDEX_NEAR_CLI) return existsSync(env.CONDEX_NEAR_CLI) ? env.CONDEX_NEAR_CLI : null;
-  if (process.platform === "win32") {
-    // npm's `near` shim is a .cmd/.ps1 wrapper; the real binary sits here.
-    const exe = env.APPDATA ? join(env.APPDATA, "npm", "node_modules", "near-cli-rs", "node_modules", ".bin_real", "near.exe") : null;
-    if (exe && existsSync(exe)) return exe;
-    for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
-      if (dir && existsSync(join(dir, "near.exe"))) return join(dir, "near.exe");
-    }
-    return null;
-  }
-  for (const dir of (env.PATH ?? "").split(delimiter)) {
-    if (dir && existsSync(join(dir, "near"))) return join(dir, "near");
+  for (const candidate of nearCliCandidates(env)) {
+    if (isNearCliRs(candidate)) return candidate;
   }
   return null;
+}
+
+const EXE = process.platform === "win32" ? "near.exe" : "near";
+/** near-cli-rs's npm package downloads the real binary to node_modules/.bin_real inside the package. */
+const realBinary = (packageDir: string) => join(packageDir, "node_modules", ".bin_real", EXE);
+
+function nearCliCandidates(env: NodeJS.ProcessEnv): string[] {
+  const explicit = env.CONDEX_NEAR_CLI?.trim();
+  if (explicit) return [explicit, ...behindShim(explicit)];
+
+  const out: string[] = [];
+  if (process.platform === "win32" && env.APPDATA) out.push(realBinary(join(env.APPDATA, "npm", "node_modules", "near-cli-rs")));
+  for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean)) {
+    out.push(join(dir, EXE));
+    for (const shim of ["near.cmd", "near.ps1", "near"]) out.push(...behindShim(join(dir, shim)));
+  }
+  if (process.platform === "win32" && env.LOCALAPPDATA) {
+    out.push(realBinary(join(env.LOCALAPPDATA, "Volta", "tools", "image", "packages", "near-cli-rs", "node_modules", "near-cli-rs")));
+  }
+  return [...new Set(out)];
+}
+
+/** The real binary behind an npm or pnpm `near` shim, which runs <package>/run-near.js. */
+function behindShim(shim: string): string[] {
+  if (!existsSync(shim) || !statSync(shim).isFile() || statSync(shim).size > 64 * 1024) return [];
+  const dir = dirname(shim);
+  const out = [
+    realBinary(join(dir, "node_modules", "near-cli-rs")),                // npm on Windows: shims sit beside node_modules
+    realBinary(join(dir, "..", "lib", "node_modules", "near-cli-rs")),   // npm on macOS/Linux: <prefix>/bin and <prefix>/lib
+  ];
+  const text = readFileSync(shim, "utf8");
+  for (const m of text.matchAll(/["']?([^"'\s]*near-cli-rs)[\\/]run-near\.js/g)) {
+    const pkg = m[1]!.replace(/^(%~?dp0%?|\$basedir)[\\/]?/i, "");
+    out.push(realBinary(isAbsolute(pkg) ? pkg : resolve(dir, pkg)));
+  }
+  return out;
+}
+
+function isNearCliRs(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) return false;
+    const out = execFileSync(path, ["--version"], { encoding: "utf8", timeout: 10_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    return /^near-cli-rs\s/m.test(out);
+  } catch {
+    return false;
+  }
 }

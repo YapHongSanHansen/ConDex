@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   id               TEXT PRIMARY KEY,
   near_account_id  TEXT NOT NULL UNIQUE,
   display_name     TEXT NOT NULL,
+  -- While keys are not checked on NEAR (dev mode), the first key that signs in is the only one
+  -- accepted afterwards, so nobody else can sign in as an account that already exists.
+  dev_public_key   TEXT,
   created_at       TEXT NOT NULL
 );
 
@@ -33,16 +36,18 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 -- Wallet sign-in --------------------------------------------------------
 -- One-time NEP-413 challenges. The wallet signs { message, nonce, recipient }.
--- Anyone can request one, so expired rows are pruned and the table is capped (services/auth.ts).
+-- Anyone can request one, so they are limited per client and in total, and pruned (services/auth.ts).
 CREATE TABLE IF NOT EXISTS auth_challenges (
   nonce       TEXT PRIMARY KEY,         -- base64 of 32 random bytes
   message     TEXT NOT NULL,
   recipient   TEXT NOT NULL,
+  client      TEXT NOT NULL,            -- address of the client that asked for it
   expires_at  TEXT NOT NULL,
   used_at     TEXT,
   created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS auth_challenges_expires ON auth_challenges (expires_at);
+CREATE INDEX IF NOT EXISTS auth_challenges_client ON auth_challenges (client, created_at);
 
 -- Website sessions, created only by a verified wallet signature.
 CREATE TABLE IF NOT EXISTS sessions (
@@ -51,10 +56,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   token_hash   TEXT NOT NULL UNIQUE,
   public_key   TEXT NOT NULL,           -- the wallet key that signed in, "ed25519:..."
   key_check    TEXT NOT NULL,           -- "near-rpc" or "none" (dev mode)
-  expires_at   TEXT NOT NULL,
+  expires_at   TEXT NOT NULL,           -- expired sessions are deleted at each new sign-in
   revoked_at   TEXT,
   created_at   TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS sessions_expires ON sessions (expires_at);
 
 -- Insights (private storage) ------------------------------------------
 CREATE TABLE IF NOT EXISTS insights (

@@ -78,6 +78,7 @@ describe("without a wallet", () => {
       ["POST", "/v1/quotes", { token_id: s.tokenId }],
       ["POST", "/v1/ledger/deposit", { amount_near: "1" }],
       ["GET", "/v1/receipts"],
+      ["GET", "/v1/receipts/rcpt_any"],
     ];
     for (const [method, path, body] of blocked) {
       const r = await api(method, path, { body });
@@ -99,13 +100,40 @@ describe("connect wallet (NEP-413)", () => {
     assert.match(first.session, /^cdxs_/);
     assert.equal(first.verify.body.session.key_check, "none");
 
-    const second = await connectWallet(api, "carol.testnet");
+    const second = await connectWallet(api, "carol.testnet", { key: first.privateKey });
     assert.equal(second.verify.body.new_account, false);
     assert.equal(second.verify.body.account.id, first.verify.body.account.id);
     assert.equal(second.verify.body.account.display_name, "Carol");
 
     const me = await api("GET", "/v1/me", { key: second.session });
     assert.equal(me.body.credential.type, "session");
+    assert.deepEqual(me.body.credential.scopes, ["publish", "read", "trade"]);
+  });
+
+  test("the sign-in message names the site, so a look-alike site is visible to the user", async () => {
+    const challenge = (await api("POST", "/v1/auth/challenge")).body;
+    assert.equal(challenge.recipient, "localhost:8787");
+    assert.match(challenge.message, /^Sign in to ConDex at localhost:8787\. /);
+  });
+
+  test("while keys are not checked on NEAR, only an account's first key can sign in as it", async () => {
+    const first = await connectWallet(api, "pinned.testnet");
+    assert.equal(first.verify.status, 201);
+    const impostor = await connectWallet(api, "pinned.testnet"); // a different, freshly generated key
+    assert.equal(impostor.verify.status, 401);
+    assert.match(impostor.verify.body.error.message, /first connected with a different key/);
+    assert.equal((await connectWallet(api, "pinned.testnet", { key: first.privateKey })).verify.status, 201);
+  });
+
+  test("receipts can only be read by the borrower and the creator", async () => {
+    const s = await setupAliceAndBob(api);
+    const quote = await api("POST", "/v1/quotes", { key: s.bobTrade, body: { token_id: s.tokenId } });
+    const order = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "buy", quantity: "1", authorise_fee: true } });
+    const receiptId = (await api("POST", `/v1/sim/orders/${order.body.id}/fill`)).body.receipt.id;
+    assert.equal((await api("GET", `/v1/receipts/${receiptId}`, { key: s.bobTrade })).status, 200);
+    assert.equal((await api("GET", `/v1/receipts/${receiptId}`, { key: s.aliceSession })).status, 200);
+    const stranger = (await connectWallet(api, "stranger.testnet")).session;
+    assert.equal((await api("GET", `/v1/receipts/${receiptId}`, { key: stranger })).status, 404);
   });
 
   test("a tampered or wrong-key signature is rejected", async () => {
@@ -163,30 +191,38 @@ describe("connect wallet (NEP-413)", () => {
 });
 
 describe("on-chain key check", () => {
-  function fakeRpc(permission: unknown, opts: { error?: boolean; down?: boolean } = {}) {
+  /** A stand-in NEAR RPC node that answers view_access_key with `answer` (or fails with HTTP 502). */
+  function fakeRpc(answer: unknown) {
     const calls: unknown[] = [];
     const fetchFn = (async (_url: string, init: RequestInit) => {
       calls.push(JSON.parse(String(init.body)));
-      if (opts.down) return new Response("bad gateway", { status: 502 });
-      return Response.json(opts.error
-        ? { jsonrpc: "2.0", id: "condex", error: { name: "HANDLER_ERROR", cause: { name: "UNKNOWN_ACCESS_KEY" } } }
-        : { jsonrpc: "2.0", id: "condex", result: { nonce: 1, permission, block_height: 1 } });
+      if (answer === "down") return new Response("bad gateway", { status: 502 });
+      return Response.json({ jsonrpc: "2.0", id: "condex", ...(answer as object) });
     }) as typeof fetch;
     return { checker: new RpcAccessKeyChecker("https://rpc.example", fetchFn), calls };
   }
+  const permission = (p: unknown) => ({ result: { nonce: 1, permission: p, block_height: 1 } });
+  const rpcError = (cause: string) => ({ error: { name: "HANDLER_ERROR", cause: { name: cause }, message: "x" } });
 
-  test("a full-access key signs in; function-call or unknown keys do not; RPC outage is a 502", async () => {
-    const cases: Array<[ReturnType<typeof fakeRpc>, number]> = [
-      [fakeRpc("FullAccess"), 201],
-      [fakeRpc({ FunctionCall: { allowance: null, receiver_id: "x.testnet", method_names: [] } }), 401],
-      [fakeRpc(null, { error: true }), 401],
-      [fakeRpc(null, { down: true }), 502],
+  test("a full-access key signs in; missing or limited keys get 401; RPC trouble is a retryable 502", async () => {
+    const cases: Array<[string, unknown, number]> = [
+      ["full-access key", permission("FullAccess"), 201],
+      ["function-call key", permission({ FunctionCall: { allowance: null, receiver_id: "x.testnet", method_names: [] } }), 401],
+      ["unknown key (JSON-RPC error)", rpcError("UNKNOWN_ACCESS_KEY"), 401],
+      ["unknown account (JSON-RPC error)", rpcError("UNKNOWN_ACCOUNT"), 401],
+      ["unknown key (FastNEAR's result.error)", { result: { error: "access key ed25519:x does not exist while viewing", logs: [] } }, 401],
+      ["node not synced", rpcError("NO_SYNCED_BLOCKS"), 502],
+      ["unknown block", rpcError("UNKNOWN_BLOCK"), 502],
+      ["rate limited inside result.error", { result: { error: "rate limit exceeded", logs: [] } }, 502],
+      ["RPC down", "down", 502],
     ];
-    for (const [rpc, status] of cases) {
+    for (const [label, answer, status] of cases) {
+      const rpc = fakeRpc(answer);
       const s = await startServer({ accessKeys: rpc.checker });
       try {
         const r = await connectWallet(s.api, "frank.testnet");
-        assert.equal(r.verify.status, status);
+        assert.equal(r.verify.status, status, label);
+        if (status === 502) assert.equal(r.verify.body.error.code, "near_rpc_unavailable", label);
         const call = rpc.calls[0] as { params: { request_type: string; account_id: string; public_key: string } };
         assert.equal(call.params.request_type, "view_access_key");
         assert.equal(call.params.account_id, "frank.testnet");
@@ -195,6 +231,16 @@ describe("on-chain key check", () => {
       } finally {
         await s.close();
       }
+    }
+  });
+
+  test("keys are not pinned when they are checked on NEAR: any full-access key of the account works", async () => {
+    const s = await startServer({ accessKeys: fakeRpc(permission("FullAccess")).checker });
+    try {
+      assert.equal((await connectWallet(s.api, "multi.testnet")).verify.status, 201);
+      assert.equal((await connectWallet(s.api, "multi.testnet")).verify.status, 201);
+    } finally {
+      await s.close();
     }
   });
 

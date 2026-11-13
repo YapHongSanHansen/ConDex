@@ -168,12 +168,16 @@
     <button value="close" aria-label="Close">✕</button>
   </form>
   <div class="dialog-body">
-    <p>This key is shown once. It lets an agent publish, read and trade as <b id="mcp-account"></b>. <span id="mcp-lifetime"></span></p>
-    <pre class="cmd" id="mcp-key"></pre>
-    <p>Add it to Claude Code by running these two lines in your terminal (PowerShell, cmd or bash):</p>
+    <p>It lets an agent publish, read and trade as <b id="mcp-account"></b>. <span id="mcp-lifetime"></span></p>
+    <p><span class="step">1.</span> Press <b>Copy commands</b>, paste into your terminal (PowerShell, cmd or bash) and press Enter. The key is already inside these commands.</p>
     <pre class="cmd" id="mcp-cmd"></pre>
-    <div class="row"><button id="mcp-copy">Copy commands</button></div>
-    <p class="small">The first line removes an older <code>condex</code> entry; it's fine if it says none was found. Then reconnect in Claude Code with <code>/mcp</code>, or restart it.</p>
+    <div class="row"><button class="primary" id="mcp-copy">Copy commands</button></div>
+    <p class="small">The first line removes an older <code>condex</code> entry; it's fine if it says none was found.</p>
+    <p><span class="step">2.</span> Restart Claude Code (or reconnect it from <code>/mcp</code>) so it picks up the new key.</p>
+    <details>
+      <summary class="small">Show the key on its own (shown only once; don't paste it into a terminal by itself, it isn't a command)</summary>
+      <pre class="cmd" id="mcp-key"></pre>
+    </details>
   </div>
 </dialog>
 
@@ -309,15 +313,37 @@ const u32le = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUi
 const borshStr = (s) => { const e = new TextEncoder().encode(s); return concatBytes(u32le(e.length), e); };
 const b64ToBytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const bytesToB64 = (b) => btoa(String.fromCharCode(...b));
+const b64UrlToBytes = (s) => b64ToBytes(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4));
+
+/**
+ * Each test account keeps one key in this browser (localStorage). While keys are not checked on NEAR,
+ * the server only lets an account sign in again with the key it first used, so the key must survive
+ * page reloads. These are throwaway test keys, never a real wallet's.
+ */
 const devKeys = {};
+async function devKey(accountId) {
+  if (devKeys[accountId]) return devKeys[accountId];
+  const storeKey = "condex.devKey." + accountId;
+  let jwk = null;
+  try { jwk = JSON.parse(localStorage.getItem(storeKey) || "null"); } catch { /* storage unavailable */ }
+  let privateKey;
+  if (jwk?.d && jwk?.x) {
+    privateKey = await crypto.subtle.importKey("jwk", jwk, { name: "Ed25519" }, false, ["sign"]);
+  } else {
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    privateKey = pair.privateKey;
+    jwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
+    try { localStorage.setItem(storeKey, JSON.stringify(jwk)); } catch { /* the key lasts for this page view */ }
+  }
+  return (devKeys[accountId] = { privateKey, publicKey: "ed25519:" + base58(b64UrlToBytes(jwk.x)) });
+}
 
 async function devWalletSign(accountId, ch) {
-  devKeys[accountId] ??= await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
-  const pub = new Uint8Array(await crypto.subtle.exportKey("raw", devKeys[accountId].publicKey));
+  const key = await devKey(accountId);
   const payload = concatBytes(u32le(2 ** 31 + 413), borshStr(ch.message), b64ToBytes(ch.nonce), borshStr(ch.recipient), new Uint8Array([0]));
   const hash = await crypto.subtle.digest("SHA-256", payload);
-  const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, devKeys[accountId].privateKey, hash));
-  return { public_key: "ed25519:" + base58(pub), signature: bytesToB64(sig) };
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, key.privateKey, hash));
+  return { public_key: key.publicKey, signature: bytesToB64(sig) };
 }
 
 async function connectDevWallet(accountId, displayName) {
@@ -371,8 +397,25 @@ async function sim(action, body) {
  * deposits and insights are only added. So your own navbar wallet and MCP key keep working.
  */
 async function ensureSetup() {
-  if (S.alicePublish && S.bobRead && S.bobTrade && S.tokenId) return;
+  if (S.alicePublish && S.bobRead && S.bobTrade && S.bobSession && S.tokenId) {
+    // Data lives in memory, so these die when the server restarts. Check them before trusting them.
+    const checks = await Promise.all([
+      ...[S.alicePublish, S.bobRead, S.bobTrade, S.bobSession].map((key) => call("GET", "/v1/me", { key })),
+      call("GET", `/v1/tokens/${encodeURIComponent(S.tokenId)}/preview`),
+    ]);
+    if (checks.every((r) => r.status === 200)) {
+      await topUpBob();
+      return;
+    }
+    for (const [k] of STATE_FIELDS) if (k !== "execSecret") S[k] = "";
+  }
   for (const id of ["connectAlice", "connectBob", "aliceKeys", "bobKeys", "deposit", "publish"]) await ACTION_BY_ID[id].run();
+}
+
+/** Demos pay fees from Bob's test balance; keep at least 1 NEAR there so they can be run again and again. */
+async function topUpBob() {
+  const b = expectStatus(await call("GET", `/v1/ledger/balances/${encodeURIComponent(val("f-bob-acct"))}`), 200);
+  if (BigInt(b.available.yocto) < 10n ** 24n) await ACTION_BY_ID.deposit.run();
 }
 
 async function settleTxCount() {
@@ -508,7 +551,7 @@ const SECTIONS = [
       { id: "visitorPublisher", label: "View Alice's publisher page", run: async () => {
         const b = expectStatus(await call("GET", `/v1/publishers/${val("f-alice-acct")}`), 200);
         expect(b.tokens.every((t) => t.messages === undefined), "publisher page must not include messages");
-        return `${b.publisher.display_name}: ${b.stats.insights} insights, ${b.stats.reads} reads, ${b.stats.filled_orders} filled orders, earned ${b.stats.fees_earned.near} NEAR`;
+        return `${b.publisher.display_name}: ${b.stats.insights} insights, ${b.stats.reads} reads, ${b.stats.paid_orders} paid orders, ${b.stats.fees_paid.near} NEAR in fees`;
       } },
       { id: "listTokens", label: "List insight previews", run: async () => {
         const b = expectStatus(await call("GET", "/v1/tokens"), 200);
@@ -666,7 +709,7 @@ const SECTIONS = [
         return `${expectStatus(await call("GET", "/v1/receipts", { key: need("aliceSession", "Connect Alice's wallet") }), 200).receipts.length} receipts`;
       } },
       { id: "getReceipt", label: "Get last receipt", run: async () => {
-        const b = expectStatus(await call("GET", `/v1/receipts/${need("receiptId", "Fill an order")}`), 200);
+        const b = expectStatus(await call("GET", `/v1/receipts/${need("receiptId", "Fill an order")}`, { key: need("bobTrade", "Issue Bob's keys") }), 200);
         return `${b.fee.near} NEAR to ${b.payout_account} — ${b.evidence_label}`;
       } },
     ],
@@ -774,7 +817,6 @@ for (const sec of SECTIONS) {
     ACTION_BY_ID[a.id] = a;
     const btn = document.createElement("button");
     btn.dataset.action = a.id;
-    if (sec.manual) btn.dataset.manual = "true";
     btn.innerHTML = '<span class="dot"></span><span></span>';
     btn.lastElementChild.textContent = a.label;
     btn.addEventListener("click", () => pending.set(btn, runButton(btn, a)));
@@ -817,7 +859,7 @@ async function runAll() {
   const results = [];
   STRICT = true;
   try {
-    for (const btn of document.querySelectorAll("button[data-action]:not([data-manual])")) {
+    for (const btn of document.querySelectorAll("button[data-action]")) {
       btn.click();
       const r = await pending.get(btn);
       const label = ACTION_BY_ID[btn.dataset.action].label;
@@ -973,9 +1015,12 @@ document.addEventListener("click", (e) => { if (!walletMenu.hidden && !e.target.
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !walletMenu.hidden) { closeWalletMenu(); walletBtn.focus(); }
 });
-// Close the menu when keyboard focus leaves it (e.g. tabbing past the last item).
+// Close the menu when keyboard focus moves to something outside it (e.g. tabbing past the last item).
+// relatedTarget is null when a click focuses nothing (Safari and Firefox on macOS do not focus buttons
+// on click), so that case is left to the outside-click handler; otherwise pressing a menu item would
+// hide the menu before its click registered.
 document.querySelector(".wallet").addEventListener("focusout", (e) => {
-  if (!walletMenu.hidden && !e.currentTarget.contains(e.relatedTarget)) closeWalletMenu();
+  if (!walletMenu.hidden && e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) closeWalletMenu();
 });
 
 function showConnectStep(step) {
@@ -1182,10 +1227,16 @@ document.getElementById("menu-switch").addEventListener("click", async () => {
   try { stored = JSON.parse(sessionStorage.getItem("condex.wallet") || "null"); } catch { /* ignore */ }
   if (stored?.token) {
     const res = await call("GET", "/v1/me", { key: stored.token });
-    if (res.status === 200 && res.body.credential?.type === "session") WALLET = stored;
-    else {
-      saveWallet();
+    if (res.status === 200 && res.body.credential?.type === "session") {
+      WALLET = stored;
+    } else if (res.status === 401 || res.status === 200) {
+      saveWallet(); // the session is really gone
       if (res.status === 401) showNotice(SESSION_ENDED);
+    } else {
+      // Server unreachable or failing (for example mid-restart): keep the session and check again
+      // when the wallet menu is opened, instead of signing out on a temporary error.
+      WALLET = stored;
+      showNotice("Couldn't check your wallet session just now. It will be checked again when you open the wallet menu.");
     }
   }
   renderWallet();

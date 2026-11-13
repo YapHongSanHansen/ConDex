@@ -6,10 +6,14 @@ import { signNep413, toNearPublicKey } from "../src/near/nep413.ts";
 
 /**
  * In-memory server on a random port. near-cli signing is off unless a test passes its own signer,
- * so no test can ever reach the real keychain on the machine running the tests.
+ * so no test can ever reach the real keychain on the machine running the tests. Every test signs in
+ * from 127.0.0.1, so the per-client sign-in rate is raised unless a test sets its own.
  */
 export async function startServer(deps: AppDeps = {}, overrides: Partial<Config> = {}) {
-  const config = { ...loadConfig({}), dbPath: ":memory:", port: 0, devMode: true, executionSecret: "test-secret", ...overrides };
+  const config = {
+    ...loadConfig({}), dbPath: ":memory:", port: 0, devMode: true, executionSecret: "test-secret", signInsPerMinute: 100_000,
+    ...overrides,
+  };
   const { app, ctx } = createApp(config, { nearCli: null, ...deps });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));

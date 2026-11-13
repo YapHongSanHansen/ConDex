@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { createApp } from "../src/api/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { type MessageSigner, NearCliSigner, findNearCli } from "../src/near/nearCli.ts";
-import { base58Encode, signNep413, toNearPublicKey } from "../src/near/nep413.ts";
+import { signNep413, toNearPrivateKey, toNearPublicKey } from "../src/near/nep413.ts";
 
 const BROWSERS = [
   process.env.CHROME_PATH,
@@ -40,8 +40,7 @@ if (!browserPath) {
 
 // A throwaway key for every signature in this run. Real near-cli signs with it when installed.
 const throwaway = generateKeyPairSync("ed25519").privateKey;
-const throwawayJwk = throwaway.export({ format: "jwk" });
-const throwawayNearKey = "ed25519:" + base58Encode(Buffer.concat([Buffer.from(throwawayJwk.d!, "base64url"), Buffer.from(throwawayJwk.x!, "base64url")]));
+const throwawayNearKey = toNearPrivateKey(throwaway);
 const nearCli = findNearCli();
 const signer: MessageSigner = nearCli
   ? new NearCliSigner(nearCli, () => ["sign-with-plaintext-private-key", throwawayNearKey])
@@ -52,7 +51,8 @@ const signer: MessageSigner = nearCli
       },
     };
 
-const config = { ...loadConfig({}), dbPath: ":memory:", devMode: true, authRecipient: "ConDex Test" };
+// The checks sign in dozens of times a minute from this computer, so the per-client limit is raised.
+const config = { ...loadConfig({}), dbPath: ":memory:", devMode: true, authRecipient: "ConDex Test", signInsPerMinute: 10_000 };
 const { app } = createApp(config, { nearCli: signer });
 const server = app.listen(0, "127.0.0.1");
 await new Promise<void>((r) => server.once("listening", r));
@@ -203,9 +203,45 @@ try {
     return "demo passed; wallet still connected; MCP key still works";
   });
 
-  await check("Disconnect ends the session on the server", async () => {
+  await check("README demo buttons recover after a server restart and keep Bob's balance topped up", async () => {
+    // A restart (memory storage) kills the keys still shown in the State panel; demos must notice.
+    await page.eval(`fetch("/v1/dev/reset", { method: "POST" })`);
+    await page.eval(`document.querySelector('[data-action="demo4"] .dot').className = "dot"`);
+    for (let run = 1; run <= 12; run++) { // each paid fill costs Bob 0.1 NEAR; his first deposit was 1 NEAR
+      await page.click(`[data-action="demo4"]`);
+      await page.waitFor(`(() => { const d = document.querySelector('[data-action="demo4"] .dot'); return d.classList.contains("pass") || d.classList.contains("fail"); })()`, 30_000);
+      const outcome = await page.eval(`document.querySelector('[data-action="demo4"]').title`);
+      if (!String(outcome).startsWith("PASS")) throw new Error(`run ${run}: ${outcome}`);
+      await page.eval(`document.querySelector('[data-action="demo4"] .dot').className = "dot"`);
+    }
+    return "12 paid demo runs in a row after a restart, all passed";
+  });
+
+  await check("test wallets keep their key across reloads; another key cannot take over the account", async () => {
+    await page.goto(`${origin}/test`);
+    const first = await page.eval(`connectDevWallet("pinned-user.testnet").then((r) => r.b.new_account)`);
+    await page.goto(`${origin}/test`);
+    const again = await page.eval(`connectDevWallet("pinned-user.testnet").then((r) => r.b.new_account)`);
+    if (first !== true || again !== false) throw new Error(`expected a new account then the same one, got ${first} then ${again}`);
+    const impostor = await page.eval(`(async () => {
+      localStorage.removeItem("condex.devKey.pinned-user.testnet");
+      delete devKeys["pinned-user.testnet"];
+      try { await connectDevWallet("pinned-user.testnet"); return "signed in"; } catch (e) { return e.message; }
+    })()`);
+    if (!/first connected with a different key/.test(String(impostor))) throw new Error(`a different key got: ${impostor}`);
+    return "same browser key works after reload; a new key is refused";
+  });
+
+  await check("Disconnect ends the session on the server (and the menu survives a click that focuses nothing)", async () => {
+    await oneClickConnect("oneclick-user.testnet");
     const token = String(await page.eval(`WALLET.token`));
-    await disconnect();
+    await page.click("#wallet-btn");
+    await page.waitFor(`!document.getElementById("wallet-menu").hidden`);
+    // Safari and Firefox on macOS do not focus a button on click: focus leaves with relatedTarget null.
+    await page.eval(`document.activeElement.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }))`);
+    if (await page.eval(`document.getElementById("wallet-menu").hidden`)) throw new Error("the menu closed before the click registered");
+    await page.click("#menu-disconnect");
+    await page.waitFor(`WALLET === null && !connecting`);
     await page.waitFor(`document.getElementById("wallet-btn").textContent.trim() === "Connect wallet"`);
     if (await sessionStatus(token) !== 401) throw new Error("old session still accepted");
     return "button back to Connect wallet; old session returns 401";
@@ -315,6 +351,7 @@ try {
   await check("phone width: no sideways scroll and no overlap, even with a long account name", async () => {
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 360, height: 800, deviceScaleFactor: 1, mobile: true });
     await page.goto(`${origin}/test`);
+    await page.waitFor(`NEAR_CLI_AVAILABLE === true && WALLET === null`); // the click depends on both
     await page.click("#wallet-btn");
     await page.waitFor(`document.getElementById("connect-dialog").open && !document.getElementById("local-flow").hidden`);
     await page.setValue("#local-account", "trading-agent.yaphongsanhansen.testnet");

@@ -1,18 +1,27 @@
 import { randomBytes } from "node:crypto";
 import type { Ctx } from "../context.ts";
 import { badRequest, forbidden, notFound, unauthorized } from "../errors.ts";
+import type { KeyCheckMode } from "../near/accessKeys.ts";
 import { newId, nowIso, sha256Hex } from "../util.ts";
 
-export const SCOPES = ["admin", "publish", "read", "trade"] as const;
-export type Scope = (typeof SCOPES)[number];
 /**
- * Scopes an API key can carry. `admin` (managing keys) belongs only to a wallet session,
+ * What a credential may do. A wallet session has all three; an API key has the ones it was issued with.
+ * Managing keys and the profile is not a scope: it needs the wallet session itself (requireSession),
  * so every API key traces back to a wallet sign-in.
  */
-export const ISSUABLE_SCOPES = ["publish", "read", "trade"] as const;
+export const SCOPES = ["publish", "read", "trade"] as const;
+export type Scope = (typeof SCOPES)[number];
+export const ISSUABLE_SCOPES = SCOPES;
 
-export interface AccountRow { id: string; near_account_id: string; display_name: string; created_at: string }
-type KeyCheck = "near-rpc" | "none";
+export interface AccountRow {
+  id: string;
+  near_account_id: string;
+  display_name: string;
+  /** Dev mode only: the one key allowed to sign in while keys are not checked on NEAR. */
+  dev_public_key: string | null;
+  created_at: string;
+}
+type KeyCheck = KeyCheckMode;
 
 interface KeyRow {
   id: string; account_id: string; key_hash: string; key_prefix: string; label: string; scopes: string;

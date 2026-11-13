@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { type KeyObject, createPublicKey, generateKeyPairSync } from "node:crypto";
+import { copyFileSync, linkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, test } from "node:test";
 import { assertSameMachine } from "../src/api/local.ts";
 import { type MessageSigner, NearCliError, NearCliSigner, findNearCli, nearCliErrorText, parseNearCliJson } from "../src/near/nearCli.ts";
-import { base58Encode, signNep413, toNearPublicKey } from "../src/near/nep413.ts";
+import { base58Encode, signNep413, toNearPrivateKey, toNearPublicKey } from "../src/near/nep413.ts";
 import { startServer } from "./helpers.ts";
 
 /** Signs like near-cli does (ed25519:<base58> signature) with an in-memory throwaway key. */
@@ -135,6 +138,12 @@ describe("same-machine check", () => {
     assert.throws(() => assertSameMachine(req("127.0.0.1", "localhost", { host: "localhost:8787", origin: "http://localhost:9999" })), /other websites/);
     assert.throws(() => assertSameMachine(req("127.0.0.1", "localhost", { host: "localhost:8787", origin: "null" })), /other websites/);
   });
+
+  test("refuses requests a proxy or tunnel passed on, even though they arrive from this computer", () => {
+    for (const header of ["x-forwarded-for", "forwarded", "x-forwarded-host", "x-real-ip", "cf-connecting-ip", "via"]) {
+      assert.throws(() => assertSameMachine(req("127.0.0.1", "localhost", { host: "localhost:8787", [header]: "203.0.113.5" })), /proxy or tunnel/, header);
+    }
+  });
 });
 
 describe("near-cli output handling", () => {
@@ -149,17 +158,46 @@ describe("near-cli output handling", () => {
     assert.equal(nearCliErrorText(stderr), "No access keys found in keychain");
   });
 
-  test("CONDEX_NEAR_CLI points at a specific binary", () => {
+  test("CONDEX_NEAR_CLI must point at near-cli-rs: missing files and other programs are rejected", () => {
     assert.equal(findNearCli({ CONDEX_NEAR_CLI: "Z:/definitely/missing/near.exe" }), null);
-    assert.equal(findNearCli({ CONDEX_NEAR_CLI: process.execPath }), process.execPath);
+    assert.equal(findNearCli({ CONDEX_NEAR_CLI: process.execPath }), null, "node runs, but it is not near-cli-rs");
+    assert.equal(findNearCli({ CONDEX_NEAR_CLI: tmpdir() }), null, "a directory");
   });
 
   const binary = findNearCli();
+  test("finds the real binary behind npm-style and pnpm-style `near` shims on PATH", { skip: binary ? false : "near-cli not installed" }, () => {
+    const exe = process.platform === "win32" ? "near.exe" : "near";
+    const root = mkdtempSync(join(tmpdir(), "condex-shim-"));
+    const install = (pkgDir: string) => {
+      const target = join(pkgDir, "node_modules", ".bin_real");
+      mkdirSync(target, { recursive: true });
+      try { linkSync(binary!, join(target, exe)); } catch { copyFileSync(binary!, join(target, exe)); }
+      return join(target, exe);
+    };
+    try {
+      // npm on Windows: the shim sits beside node_modules (for example under nvm-windows' prefix).
+      const npmDir = join(root, "npm-prefix");
+      const npmReal = install(join(npmDir, "node_modules", "near-cli-rs"));
+      writeFileSync(join(npmDir, "near.cmd"), '@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\near-cli-rs\\run-near.js" %*\r\n');
+      assert.equal(findNearCli({ PATH: npmDir }), npmReal);
+      assert.equal(findNearCli({ CONDEX_NEAR_CLI: join(npmDir, "near.cmd") }), npmReal, "CONDEX_NEAR_CLI may name the shim");
+
+      // pnpm: the shim points somewhere else entirely.
+      const pnpmBin = join(root, "pnpm-home");
+      mkdirSync(pnpmBin);
+      const pnpmReal = install(join(root, "pnpm-global", "5", "node_modules", "near-cli-rs"));
+      writeFileSync(join(pnpmBin, "near.cmd"), '@SETLOCAL\r\n"%~dp0\\..\\pnpm-global\\5\\node_modules\\near-cli-rs\\run-near.js" %*\r\n');
+      assert.equal(findNearCli({ PATH: pnpmBin }), pnpmReal);
+
+      assert.equal(findNearCli({ PATH: join(root, "nothing-here") }), null);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("the real near-cli binary signs a sign-in that the server accepts", { skip: binary ? false : "near-cli not installed" }, async () => {
     const { privateKey } = generateKeyPairSync("ed25519");
-    const jwk = privateKey.export({ format: "jwk" });
-    const throwaway = "ed25519:" + base58Encode(Buffer.concat([Buffer.from(jwk.d!, "base64url"), Buffer.from(jwk.x!, "base64url")]));
-    const signer = new NearCliSigner(binary!, () => ["sign-with-plaintext-private-key", throwaway]);
+    const signer = new NearCliSigner(binary!, () => ["sign-with-plaintext-private-key", toNearPrivateKey(privateKey)]);
     const srv = await startServer({ nearCli: signer });
     try {
       const r = await srv.api("POST", "/v1/dev/wallet/near-cli", { body: { account_id: "real-cli.testnet" } });

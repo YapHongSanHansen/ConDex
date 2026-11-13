@@ -18,7 +18,7 @@ import { getPreview, listPreviews, publishInsight, publishVersion, publisherProf
 import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
 import { amount, parseNear } from "../util.ts";
-import { assertSameMachine } from "./local.ts";
+import { assertSameMachine, isSameMachine } from "./local.ts";
 import {
   depositBody, executionEventBody, issueKeyBody, nearCliConnectBody, orderBody, parse, publishBody, quoteBody, simBody,
   updateMeBody, verifySignInBody,
@@ -55,7 +55,12 @@ export function createApp(config: Config, deps: AppDeps = {}) {
 
   const app = express();
   app.disable("x-powered-by");
+  // Behind a reverse proxy, take the client address from X-Forwarded-For so sign-in limits apply per user.
+  if (config.trustProxyHops > 0) app.set("trust proxy", config.trustProxyHops);
   app.use(express.json({ limit: "1mb" }));
+
+  /** The caller's address, used to limit sign-in attempts per client. */
+  const clientAddress = (req: Request) => (req.ip ?? req.socket.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
 
   const auth = (req: Request): Principal => {
     const header = req.get("authorization") ?? "";
@@ -71,26 +76,36 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     }
   };
 
-  const devOnly = (_req: Request, _res: Response, next: NextFunction) => {
+  /**
+   * Dev routes exist only in dev mode, and only for this computer: they wipe data, drive the simulated
+   * venue and sign in with this computer's wallet, so other machines, other websites and tunnels are refused.
+   */
+  const devOnly = (req: Request, _res: Response, next: NextFunction) => {
     if (!config.devMode) return next(notFound("Route"));
+    try {
+      assertSameMachine(req);
+    } catch (err) {
+      return next(err);
+    }
     next();
   };
 
   // ---- meta ----
-  app.get("/health", (_req, res) => {
+  app.get("/health", (req, res) => {
     res.json({
       ok: true, ledger: ctx.ledger.kind, venue: ctx.venue.name, dev_mode: config.devMode,
       near_network: config.nearNetwork, wallet_key_check: ctx.accessKeys.mode,
       storage: config.dbPath === ":memory:" ? "memory" : "file",
-      // Dev mode only: lets the test console print a ready-to-paste `claude mcp add` command.
-      ...(config.devMode ? { mcp_server: MCP_SERVER_PATH } : {}),
+      // Only for the test console on this computer: lets it print a ready-to-paste `claude mcp add`
+      // command. The path includes the OS user name, so it is never sent to anyone else.
+      ...(config.devMode && isSameMachine(req) ? { mcp_server: MCP_SERVER_PATH } : {}),
     });
   });
 
   // ---- connect wallet (NEP-413 sign-in) ----
   // Without a wallet session a visitor can only use the public routes: publisher pages and token previews.
-  app.post("/v1/auth/challenge", (_req, res) => {
-    res.status(201).json(createChallenge(ctx));
+  app.post("/v1/auth/challenge", (req, res) => {
+    res.status(201).json(createChallenge(ctx, clientAddress(req)));
   });
 
   app.post("/v1/auth/verify", async (req, res) => {
@@ -109,20 +124,19 @@ export function createApp(config: Config, deps: AppDeps = {}) {
 
   // ---- one-click connect with this computer's near-cli wallet (dev mode only) ----
   // The server signs ConDex's own challenge with near-cli. Callers pick the account, never the message,
-  // so this cannot be used to sign anything else.
+  // so this cannot be used to sign anything else. devOnly limits it to this computer.
   app.get("/v1/dev/wallet/near-cli", devOnly, (_req, res) => {
     res.json({ available: ctx.nearCli !== null, network: config.nearNetwork });
   });
 
   app.post("/v1/dev/wallet/near-cli", devOnly, async (req, res) => {
-    assertSameMachine(req);
     if (!ctx.nearCli) {
       throw new ApiError(501, "near_cli_unavailable",
         "near-cli was not found on the computer running ConDex. Install it with: npm install -g near-cli-rs");
     }
     const accountId = parse(nearCliConnectBody, req.body).account_id.trim().toLowerCase();
     assertNearAccountId(accountId, "account_id");
-    const challenge = createChallenge(ctx);
+    const challenge = createChallenge(ctx, clientAddress(req));
     let signed;
     try {
       signed = await ctx.nearCli.sign({
@@ -240,7 +254,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   });
 
   app.get("/v1/receipts/:receiptId", (req, res) => {
-    res.json(getReceipt(ctx, req.params.receiptId!));
+    res.json(getReceipt(ctx, auth(req), req.params.receiptId!));
   });
 
   // ---- execution integration (trusted service) ----
@@ -259,7 +273,8 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     res.json(replayEvent(ctx, req.params.eventId!));
   });
 
-  // ---- ledger (public reads; deposit only on the mock ledger) ----
+  // ---- ledger (public reads, like a NEAR explorer: this mirrors what will be public on chain;
+  // deposit only on the mock ledger) ----
   app.get("/v1/ledger/balances/:account", (req, res) => {
     const b = ctx.ledger.balanceOf(req.params.account!);
     res.json({

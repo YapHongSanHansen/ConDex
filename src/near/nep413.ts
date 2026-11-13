@@ -65,6 +65,13 @@ export function ed25519PublicKey(nearKey: string): KeyObject {
   return createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: Buffer.from(raw).toString("base64url") }, format: "jwk" });
 }
 
+/** Private KeyObject -> "ed25519:<base58 of 32-byte seed + 32-byte public key>", the form near-cli accepts. */
+export function toNearPrivateKey(key: KeyObject): string {
+  const jwk = key.export({ format: "jwk" });
+  if (jwk.crv !== "Ed25519" || !jwk.d || !jwk.x) throw new Error("Not an Ed25519 private key");
+  return `ed25519:${base58Encode(Buffer.concat([Buffer.from(jwk.d, "base64url"), Buffer.from(jwk.x, "base64url")]))}`;
+}
+
 /** KeyObject -> "ed25519:<base58>" */
 export function toNearPublicKey(key: KeyObject): string {
   const jwk = key.export({ format: "jwk" });

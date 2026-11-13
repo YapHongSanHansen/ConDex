@@ -1,10 +1,12 @@
+/** "near-rpc" checks keys on chain. "none" skips the check and is only allowed in dev mode. */
+export type KeyCheckMode = "near-rpc" | "none";
+
 /**
  * Proves that the key which signed a sign-in message belongs to the NEAR account it claims.
  * A valid signature alone only proves control of a key pair, not of the account.
  */
 export interface AccessKeyChecker {
-  /** "near-rpc" checks on chain. "none" skips the check and is only allowed in dev mode. */
-  readonly mode: "near-rpc" | "none";
+  readonly mode: KeyCheckMode;
   /** Resolves true only if `publicKey` is a full-access key of `accountId`. */
   isFullAccessKey(accountId: string, publicKey: string): Promise<boolean>;
 }
@@ -33,12 +35,28 @@ export class RpcAccessKeyChecker implements AccessKeyChecker {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error(`NEAR RPC returned HTTP ${res.status}`);
-    const body = (await res.json()) as { result?: { permission?: unknown }; error?: unknown };
-    // Unknown account or key comes back as an error: treat as "not this account's key".
-    if (body.error || !body.result) return false;
+    const body = (await res.json()) as {
+      result?: { permission?: unknown; error?: unknown };
+      error?: { name?: string; cause?: { name?: string }; message?: string; data?: unknown };
+    };
+    // Only "this key or account does not exist" means "not this account's key". Any other error
+    // (node not synced, rate limit, bad block) is a failure to check, which the caller reports as retryable.
+    if (body.error) {
+      if (NOT_THIS_ACCOUNTS_KEY.has(body.error.cause?.name ?? "")) return false;
+      const reason = body.error.cause?.name ?? body.error.name ?? "error";
+      throw new Error(`NEAR RPC ${reason}: ${body.error.message ?? JSON.stringify(body.error.data ?? "")}`);
+    }
+    if (!body.result) throw new Error("NEAR RPC returned no result");
+    // Some nodes (FastNEAR included) answer HTTP 200 with result.error instead of a JSON-RPC error.
+    if (typeof body.result.error === "string") {
+      if (/does not exist/i.test(body.result.error)) return false;
+      throw new Error(`NEAR RPC: ${body.result.error}`);
+    }
     return body.result.permission === "FullAccess";
   }
 }
+
+const NOT_THIS_ACCOUNTS_KEY = new Set(["UNKNOWN_ACCESS_KEY", "UNKNOWN_ACCOUNT", "INVALID_ACCOUNT"]);
 
 /** Dev mode only: trusts the claimed account. The signature is still verified. */
 export class NoAccessKeyCheck implements AccessKeyChecker {

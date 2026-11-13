@@ -2,7 +2,7 @@ import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
 import { badRequest, forbidden, notFound } from "../errors.ts";
 import { amount, canonicalJson, newId, nowIso, parseNear, sha256Hex } from "../util.ts";
-import { type Principal, accountView, assertNearAccountId, getAccount, requireScope } from "./accounts.ts";
+import { type AccountRow, type Principal, accountView, assertNearAccountId, getAccount, requireScope } from "./accounts.ts";
 
 export interface Message {
   role: "user" | "assistant" | "system" | "tool";
@@ -67,11 +67,13 @@ export function getPreview(ctx: Ctx, tokenId: string) {
 
 /** Public publisher page: who they are, what they published and how often it was traded. No message content. */
 export function publisherProfile(ctx: Ctx, nearAccountId: string) {
-  const account = ctx.db.prepare("SELECT * FROM accounts WHERE near_account_id = ?").get(nearAccountId) as
-    | Parameters<typeof accountView>[0] | undefined;
+  const account = ctx.db.prepare("SELECT * FROM accounts WHERE near_account_id = ?").get(nearAccountId) as AccountRow | undefined;
   if (!account) throw notFound(`Publisher ${nearAccountId}`);
   const { n: insightCount } = ctx.db.prepare("SELECT COUNT(*) AS n FROM insights WHERE creator_id = ?").get(account.id) as { n: number };
-  const fees = ctx.db.prepare("SELECT fee_yocto FROM receipts WHERE creator_id = ?").all(account.id) as Array<{ fee_yocto: string }>;
+  // A receipt exists once an order linked to one of their insights got its first confirmed fill (even a
+  // partial one): that is when the fee was paid, to the payout account set on that insight version.
+  const receipts = ctx.db.prepare("SELECT fee_yocto, payout_account FROM receipts WHERE creator_id = ?").all(account.id) as
+    Array<{ fee_yocto: string; payout_account: string }>;
   const { n: readCount } = ctx.db.prepare(
     "SELECT COUNT(*) AS n FROM reads r JOIN insight_versions v ON v.token_id = r.token_id WHERE v.creator_id = ?",
   ).get(account.id) as { n: number };
@@ -80,8 +82,11 @@ export function publisherProfile(ctx: Ctx, nearAccountId: string) {
     stats: {
       insights: insightCount,
       reads: readCount,
-      filled_orders: fees.length,
-      fees_earned: amount(fees.reduce((sum, f) => sum + BigInt(f.fee_yocto), 0n)),
+      /** Linked orders that got at least one confirmed fill, so their fee was paid. */
+      paid_orders: receipts.length,
+      /** Total of those fees, paid to the payout accounts below (which may differ from the publisher). */
+      fees_paid: amount(receipts.reduce((sum, r) => sum + BigInt(r.fee_yocto), 0n)),
+      payout_accounts: [...new Set(receipts.map((r) => r.payout_account))],
     },
     tokens: listPreviews(ctx, { creatorId: account.id }),
   };

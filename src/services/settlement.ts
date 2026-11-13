@@ -113,9 +113,10 @@ export function listReceipts(ctx: Ctx, principal: Principal) {
   return rows.map((r) => receiptView(ctx, r));
 }
 
-export function getReceipt(ctx: Ctx, receiptId: string) {
+/** A receipt can be read by the borrower and the creator of the trade it records, nobody else. */
+export function getReceipt(ctx: Ctx, principal: Principal, receiptId: string) {
   const row = ctx.db.prepare("SELECT * FROM receipts WHERE id = ?").get(receiptId) as ReceiptRow | undefined;
-  if (!row) throw notFound("Receipt");
+  if (!row || (row.borrower_id !== principal.account.id && row.creator_id !== principal.account.id)) throw notFound("Receipt");
   return receiptView(ctx, row);
 }
 

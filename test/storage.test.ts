@@ -30,9 +30,13 @@ test("by default data lives in memory and nothing is written to disk", () => {
 
 test("a restart starts empty: published insights, sessions and keys are gone", async () => {
   const first = await startServer();
-  const s = await setupAliceAndBob(first.api);
-  assert.equal((await first.api("GET", "/v1/tokens")).body.tokens.length, 1);
-  await first.close();
+  let s: Awaited<ReturnType<typeof setupAliceAndBob>>;
+  try {
+    s = await setupAliceAndBob(first.api);
+    assert.equal((await first.api("GET", "/v1/tokens")).body.tokens.length, 1);
+  } finally {
+    await first.close();
+  }
 
   const second = await startServer();
   try {
