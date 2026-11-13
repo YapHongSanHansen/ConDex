@@ -4,7 +4,7 @@
 
 Other agents can use the token ID to read the thesis for free. A borrower pays a usage fee only when a trade they linked to that NFT receives a confirmed fill, and the fee goes to the creator. Each filled trade is recorded on the NFT as a proof of trade, and the creator’s score is calculated from those proofs alone.
 
-> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing, free reading and paying the creator per filled trade work today. Required expiry, recorded thesis conditions, trade matching, verified results, the creator score, the NEAR testnet contract and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
+> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing, free reading and paying the creator per filled trade work today. Verified results, the creator score, the NEAR testnet contract and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
 
 ## The problem
 
@@ -167,8 +167,8 @@ The API and code call a thesis an *insight*, and its fingerprint a `content_hash
 
 | Rule | In the prototype today |
 | --- | --- |
-| Expiry date required, with a reminder | Not built. The expiry is optional. |
-| ConDex’s AI sets a missing expiry | Not built. A thesis published without an expiry never expires. |
+| Expiry date required, with a reminder | Built. Publishing takes `expiry_date` (`YYYY-MM-DD`) and an optional `expiry_time` (`HH:MM`, UTC; without it the thesis expires at 23:59 UTC), or a full ISO `expires_at`. A past or malformed expiry is refused. The MCP publish tools tell the agent to ask the creator for the date and time. |
+| ConDex’s AI sets a missing expiry | Built. With no expiry given, the reasoning model reads the thesis and takes the date from the deadline or event it describes, at most 30 days out. The proof of thesis says `set_by: "ai"` with the reason, and both are part of the content hash. With no model configured, or no usable answer, publishing is refused with `expiry_required`, so nothing is minted without an expiry. |
 | Expiry stops new trades | Built. After the expiry, fee quotes and linked orders are refused, and reading still works. |
 | Thesis conditions as fields | Built. `conditions` holds direction (long or short), entry, invalidation and an optional exit, beside the market. They are optional when publishing, and are served only to read-scoped keys. |
 | Thesis NFT | Partly. Each version gets a token record with a fingerprint, creator, payout account and fee, on the mock ledger. It is not yet an NEP-171 NFT on NEAR, and the expiry is covered by the fingerprint but is not a field of its own. |
@@ -284,12 +284,17 @@ Invalid values (a misspelt network, `CONDEX_DEV_MODE=yes`, a timeout of `5m`) st
 | `CONDEX_SIGNINS_PER_MINUTE` | `60` | New sign-in challenges per client address per minute. |
 | `CONDEX_TRUST_PROXY` | `0` | Number of reverse proxies in front of the server, so the client address (for sign-in limits) comes from `X-Forwarded-For`. |
 | `CONDEX_QUOTE_TTL_SECONDS` | `300` | How long a fee quote stays valid. |
+| `CONDEX_LLM_API_KEY` | none | Key for the reasoning model that sets a missing expiry. Without it, a thesis must be published with an expiry. Put it in a git-ignored `.env` file (`npm start` and `npm run dev` read it), never in the code. |
+| `CONDEX_LLM_BASE_URL` | `https://llm.grafilab.ai/v1` | Any OpenAI-compatible endpoint. |
+| `CONDEX_LLM_MODEL` | `qwen/qwen3.7-flash` | Model used for the expiry. |
+| `CONDEX_LLM_REASONING_EFFORT` | `low` | `low`, `medium` or `high`. |
+| `CONDEX_LLM_TIMEOUT_SECONDS` | `60` | How long to wait for the model before refusing to publish. |
 | `CONDEX_NEAR_CLI` | found automatically | Path to near-cli-rs for one-click connect (an npm or pnpm `near` shim also works). The server prints at startup whether it found it. |
 
 ## Planned testnet demo
 
 - [ ] Publish a selected conversation with its conditions and expiry from an agent, and mint its thesis NFT on NEAR testnet.
-- [ ] Publish a thesis without an expiry date and show ConDex’s AI setting one, marked as set by ConDex.
+- [x] Publish a thesis without an expiry date and show ConDex’s AI setting one, marked as set by ConDex. (Works against the mock ledger.)
 - [ ] Retrieve the thesis twice with a borrower credential and show zero charges.
 - [ ] Show that an order in the wrong market or direction, or placed after the expiry, cannot be linked.
 - [ ] Demonstrate a cancelled, unfilled order and release the reserved fee.

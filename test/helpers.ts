@@ -3,6 +3,19 @@ import type { AddressInfo } from "node:net";
 import { type AppDeps, createApp } from "../src/api/app.ts";
 import { type Config, loadConfig } from "../src/config.ts";
 import { signNep413, toNearPublicKey } from "../src/near/nep413.ts";
+import type { ExpiryAdvisor } from "../src/services/expiry.ts";
+
+/** Stands in for the reasoning model: always answers "three days from now", and counts how often it was asked. */
+export function fakeAdvisor(): ExpiryAdvisor & { calls: number } {
+  return {
+    model: "fake",
+    calls: 0,
+    async suggest(_thesis, now) {
+      this.calls++;
+      return { expiresAt: new Date(now.getTime() + 3 * 24 * 3600 * 1000).toISOString(), reason: "The thesis is a short-term fade, valid for a few days." };
+    },
+  };
+}
 
 /**
  * In-memory server on a random port. near-cli signing is off unless a test passes its own signer,
@@ -14,7 +27,7 @@ export async function startServer(deps: AppDeps = {}, overrides: Partial<Config>
     ...loadConfig({}), dbPath: ":memory:", port: 0, devMode: true, executionSecret: "test-secret", signInsPerMinute: 100_000,
     ...overrides,
   };
-  const { app, ctx } = createApp(config, { nearCli: null, ...deps });
+  const { app, ctx } = createApp(config, { nearCli: null, expiryAdvisor: fakeAdvisor(), ...deps });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
