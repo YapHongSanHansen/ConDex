@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS insight_versions (
   market          TEXT,
   summary         TEXT,
   expires_at      TEXT,
+  conditions      TEXT,                 -- JSON { direction, entry, invalidation, exit } or NULL; part of the content hash
   messages        TEXT NOT NULL,        -- JSON array, private: served only to read-scoped keys
   content_hash    TEXT NOT NULL,
   mint_tx         TEXT NOT NULL,

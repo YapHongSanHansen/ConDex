@@ -35,10 +35,19 @@ export const messageSchema = z.object({
   at: z.string().max(40).optional(),
 });
 
+/** The thesis conditions, in the creator's own words. Direction decides which side of an order can link to it. */
+export const conditionsSchema = z.object({
+  direction: z.enum(["long", "short"]).nullable().optional(),
+  entry: z.string().min(1).max(1000).nullable().optional(),
+  invalidation: z.string().min(1).max(1000).nullable().optional(),
+  exit: z.string().min(1).max(1000).nullable().optional(),
+});
+
 export const publishBody = z.object({
   title: z.string().min(1).max(200),
   market: z.string().min(1).max(64).nullable().optional(),
   summary: z.string().max(1000).nullable().optional(),
+  conditions: conditionsSchema.nullable().optional(),
   expires_at: z.string().nullable().optional(),
   fee_near: nearAmount,
   payout_account: z.string().nullable().optional(),

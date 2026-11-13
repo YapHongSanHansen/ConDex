@@ -10,10 +10,21 @@ export interface Message {
   at?: string;
 }
 
+/** The thesis conditions in the creator's own words. Preserved exactly as published: they are part of the content hash. */
+export interface Conditions {
+  /** long opens with a buy, short with a sell. */
+  direction: "long" | "short" | null;
+  entry: string | null;
+  invalidation: string | null;
+  /** Optional: when to take profit or close. */
+  exit: string | null;
+}
+
 export interface PublishInput {
   title: string;
   market?: string | null;
   summary?: string | null;
+  conditions?: Conditions | null;
   expiresAt?: string | null;
   feeNear: string;
   payoutAccount?: string | null;
@@ -23,7 +34,7 @@ export interface PublishInput {
 export interface VersionRow {
   token_id: string; insight_id: string; version: number; creator_id: string; payout_account: string;
   fee_yocto: string; title: string; market: string | null; summary: string | null; expires_at: string | null;
-  messages: string; content_hash: string; mint_tx: string; created_at: string;
+  conditions: string | null; messages: string; content_hash: string; mint_tx: string; created_at: string;
 }
 
 /** Publishes a new insight. Its first version is minted as a token. */
@@ -107,7 +118,9 @@ export function readInsight(ctx: Ctx, principal: Principal, tokenId: string) {
   const total = charges.reduce((sum, r) => sum + BigInt(r.charged_yocto), 0n);
   return {
     ...previewView(ctx, row),
+    conditions: conditionsOf(row),
     messages: JSON.parse(row.messages) as Message[],
+    integrity: integrity(row),
     charge: amount(0n),
     your_reads: { count: charges.length, total_charged: amount(total) },
   };
@@ -121,6 +134,84 @@ export function getVersion(ctx: Ctx, tokenId: string): VersionRow {
 
 export function isExpired(row: VersionRow): boolean {
   return !!row.expires_at && row.expires_at <= nowIso();
+}
+
+/** The conditions as published, or null for a thesis published without any. */
+export function conditionsOf(r: VersionRow): Conditions | null {
+  return r.conditions ? (JSON.parse(r.conditions) as Conditions) : null;
+}
+
+/** The exact object that is hashed. Rebuilt from the stored row, so the fingerprint can be re-checked at any time. */
+function contentOf(r: VersionRow) {
+  return {
+    token_id: r.token_id,
+    insight_id: r.insight_id,
+    version: r.version,
+    title: r.title,
+    market: r.market,
+    summary: r.summary,
+    conditions: conditionsOf(r),
+    expires_at: r.expires_at,
+    messages: JSON.parse(r.messages) as Message[],
+  };
+}
+
+/** Recomputes the fingerprint from what is stored and compares it with the one minted on the ledger. */
+function integrity(r: VersionRow) {
+  const recomputed = sha256Hex(canonicalJson(contentOf(r)));
+  return { content_hash: r.content_hash, recomputed_hash: recomputed, matches: recomputed === r.content_hash };
+}
+
+/**
+ * Proof of thesis plus every proof of trade linked to it. Public: it holds what the NFT records on NEAR, and
+ * never the conversation or the conditions, only their fingerprint.
+ */
+export function thesisProof(ctx: Ctx, tokenId: string) {
+  const row = getVersion(ctx, tokenId);
+  const trades = ctx.db.prepare(
+    `SELECT r.id AS receipt_id, r.fee_yocto, r.evidence_source, r.settle_tx, r.created_at AS proven_at,
+            o.id AS order_id, o.market, o.side, o.quantity, o.filled_quantity, o.status, o.created_at AS authorised_at,
+            a.near_account_id AS trader, e.quantity AS fill_quantity, e.price AS fill_price, e.received_at AS fill_at
+       FROM receipts r
+       JOIN orders o ON o.id = r.order_id
+       JOIN accounts a ON a.id = r.borrower_id
+       LEFT JOIN execution_events e ON e.id = r.first_fill_event_id
+      WHERE r.token_id = ? ORDER BY r.created_at, r.rowid`,
+  ).all(tokenId) as unknown as Array<{
+    receipt_id: string; fee_yocto: string; evidence_source: string; settle_tx: string; proven_at: string; order_id: string;
+    market: string; side: "buy" | "sell"; quantity: string; filled_quantity: string; status: string; authorised_at: string;
+    trader: string; fill_quantity: string | null; fill_price: string | null; fill_at: string | null;
+  }>;
+  const creator = accountView(getAccount(ctx, row.creator_id));
+  return {
+    proof_of_thesis: {
+      token_id: row.token_id,
+      insight_id: row.insight_id,
+      version: row.version,
+      creator,
+      published_at: row.created_at,
+      expires_at: row.expires_at,
+      content_hash: row.content_hash,
+      /** True while the stored conditions and conversation still hash to the minted fingerprint. */
+      preserved: integrity(row).matches,
+      usage_fee_per_filled_trade: amount(row.fee_yocto),
+      payout_account: row.payout_account,
+      mint: { ledger: ctx.ledger.kind, tx: row.mint_tx },
+    },
+    proofs_of_trade: trades.map((t) => ({
+      receipt_id: t.receipt_id,
+      thesis: { token_id: row.token_id, content_hash: row.content_hash },
+      trader: t.trader,
+      role: t.trader === creator.near_account_id ? "creator" : "borrower",
+      order: { id: t.order_id, market: t.market, side: t.side, quantity: t.quantity, authorised_at: t.authorised_at, status: t.status },
+      fill: { at: t.fill_at, price: t.fill_price, quantity: t.fill_quantity, source: t.evidence_source },
+      fee_paid: amount(t.fee_yocto),
+      settlement: { ledger: ctx.ledger.kind, tx: t.settle_tx },
+      // Closing fills are not tracked yet, so no result is calculated.
+      closing_fill: null,
+      proven_at: t.proven_at,
+    })),
+  };
 }
 
 // ---- internals ----
@@ -138,6 +229,7 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
     title: input.title,
     market: input.market ?? null,
     summary: input.summary ?? null,
+    conditions: input.conditions ?? null,
     expires_at: input.expiresAt ?? null,
     messages: input.messages,
   };
@@ -152,11 +244,12 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
   const createdAt = nowIso();
   ctx.db.prepare(
     `INSERT INTO insight_versions (token_id, insight_id, version, creator_id, payout_account, fee_yocto, title, market,
-       summary, expires_at, messages, content_hash, mint_tx, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       summary, expires_at, conditions, messages, content_hash, mint_tx, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     tokenId, insightId, version, principal.account.id, payoutAccount, feeYocto.toString(), input.title,
-    content.market, content.summary, content.expires_at, JSON.stringify(input.messages), contentHash, tx, createdAt,
+    content.market, content.summary, content.expires_at,
+    content.conditions ? JSON.stringify(content.conditions) : null, JSON.stringify(input.messages), contentHash, tx, createdAt,
   );
   return previewView(ctx, getVersion(ctx, tokenId));
 }
@@ -180,6 +273,9 @@ function previewView(ctx: Ctx, r: VersionRow) {
     title: r.title,
     market: r.market,
     summary: r.summary,
+    conditions_set: r.conditions !== null,
+    direction: conditionsOf(r)?.direction ?? null,
+    published_at: r.created_at,
     expires_at: r.expires_at,
     expired: isExpired(r),
     message_count: (JSON.parse(r.messages) as unknown[]).length,

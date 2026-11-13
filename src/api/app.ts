@@ -16,7 +16,7 @@ import {
   type Principal, accountView, assertNearAccountId, authenticate, issueKey, listKeys, requireSession, revokeKey, updateDisplayName,
 } from "../services/accounts.ts";
 import { createChallenge, signOut, verifySignIn } from "../services/auth.ts";
-import { getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight } from "../services/insights.ts";
+import { getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight, thesisProof } from "../services/insights.ts";
 import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
 import { amount, parseNear } from "../util.ts";
@@ -236,6 +236,14 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     title: body.title,
     market: body.market ?? null,
     summary: body.summary ?? null,
+    conditions: body.conditions
+      ? {
+        direction: body.conditions.direction ?? null,
+        entry: body.conditions.entry ?? null,
+        invalidation: body.conditions.invalidation ?? null,
+        exit: body.conditions.exit ?? null,
+      }
+      : null,
     expiresAt: body.expires_at ?? null,
     feeNear: body.fee_near,
     payoutAccount: body.payout_account ?? null,
@@ -265,6 +273,11 @@ export function createApp(config: Config, deps: AppDeps = {}) {
 
   app.get("/v1/tokens/:tokenId/preview", (req, res) => {
     res.json(getPreview(ctx, req.params.tokenId!));
+  });
+
+  // Proof of thesis and every proof of trade linked to it. Public, and never includes the conversation.
+  app.get("/v1/tokens/:tokenId/proof", (req, res) => {
+    res.json(thesisProof(ctx, req.params.tokenId!));
   });
 
   // Full conversation: needs a read-scoped key. Always free.
