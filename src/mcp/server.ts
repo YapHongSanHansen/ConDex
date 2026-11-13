@@ -12,6 +12,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+export interface McpToolInfo {
+  name: string;
+  title: string;
+  description: string;
+}
+
+/** Filled as tools are registered, so the console can show exactly what an agent will get. */
+export const MCP_TOOLS: McpToolInfo[] = [];
+
 export interface McpOptions {
   apiUrl: string;
   apiKey: string | undefined;
@@ -39,6 +48,15 @@ const publishShape = {
 
 export function buildMcpServer(opts: McpOptions): McpServer {
   const server = new McpServer({ name: "condex", version: "0.1.0" });
+
+  // Record each tool as it is registered, so the console can list exactly what an agent gets.
+  const register = server.registerTool.bind(server);
+  server.registerTool = ((name: string, config: { title?: string; description?: string }, cb: never) => {
+    if (!MCP_TOOLS.some((t) => t.name === name)) {
+      MCP_TOOLS.push({ name, title: config.title ?? name, description: config.description ?? "" });
+    }
+    return (register as (n: string, c: unknown, f: unknown) => unknown)(name, config, cb);
+  }) as typeof server.registerTool;
 
   const call = async (method: string, path: string, body?: unknown): Promise<ToolResult> => {
     if (!opts.apiKey) {
@@ -127,6 +145,24 @@ export function buildMcpServer(opts: McpOptions): McpServer {
   return server;
 }
 
+/**
+ * Tell ConDex this key's MCP server has started, so the console can show "connected" and the tool list.
+ * Failure is only logged (to stderr: stdout is the MCP protocol channel).
+ */
+export async function sayHello(opts: McpOptions): Promise<void> {
+  if (!opts.apiKey) return;
+  try {
+    const res = await fetch(new URL("/v1/mcp/hello", opts.apiUrl), {
+      method: "POST",
+      headers: { authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ client: "condex-mcp", version: "0.1.0", tools: MCP_TOOLS.map((t) => t.name) }),
+    });
+    if (!res.ok) console.error(`condex-mcp: ConDex answered ${res.status} to the hello (is the key still valid?)`);
+  } catch (err) {
+    console.error(`condex-mcp: could not reach ConDex at ${opts.apiUrl}: ${String(err)}`);
+  }
+}
+
 function isMain(): boolean {
   if (!process.argv[1]) return false;
   try {
@@ -137,9 +173,11 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
-  const server = buildMcpServer({
+  const opts = {
     apiUrl: process.env.CONDEX_API_URL ?? "http://localhost:8787",
     apiKey: process.env.CONDEX_API_KEY,
-  });
+  };
+  const server = buildMcpServer(opts);
   await server.connect(new StdioServerTransport());
+  void sayHello(opts);
 }

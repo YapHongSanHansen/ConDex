@@ -93,6 +93,8 @@ try {
     const e = p as { type: string; args: Array<{ value?: unknown; description?: string }> };
     if (e.type === "error") pageErrors.push(e.args.map((a) => a.value ?? a.description).join(" "));
   });
+  // The console asks "Disconnect Claude Code from ConDex?" with window.confirm: answer yes.
+  cdp.on("Page.javascriptDialogOpening", () => { void cdp.send("Page.handleJavaScriptDialog", { accept: true }); });
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 860, deviceScaleFactor: 1, mobile: false });
@@ -171,26 +173,37 @@ try {
   });
 
   let mcpKey = "";
-  await check("menu: Create an MCP key gives a working key and two commands that are safe to paste again", async () => {
+  await check("menu: Create an MCP key gives a working key and commands that are safe to paste again", async () => {
     await page.click("#wallet-btn");
     await page.waitFor(`!document.getElementById("wallet-menu").hidden`);
     await shot("3-wallet-menu");
     await page.click("#menu-mcp");
     await page.waitFor(`document.getElementById("mcp-dialog").open`);
     mcpKey = String(await page.eval(`document.getElementById("mcp-key").textContent`));
-    const lines = String(await page.eval(`document.getElementById("mcp-cmd").textContent`)).split("\n");
     if (!mcpKey.startsWith("cdx_")) throw new Error(`key looks wrong: ${mcpKey.slice(0, 12)}`);
-    if (lines.length !== 2 || lines[0] !== "claude mcp remove condex") throw new Error(`expected remove + add lines, got ${JSON.stringify(lines)}`);
-    if (!lines[1]!.includes(`CONDEX_API_KEY=${mcpKey}`) || !lines[1]!.includes(`"--" node "`) || !/server\.ts"$/.test(lines[1]!)) {
-      throw new Error(`add line looks wrong: ${lines[1]}`);
+    // The bare key is tucked away, so nobody pastes it into a terminal on its own.
+    const keyShown = await page.eval(`(() => { const el = document.getElementById("mcp-key"); return el.closest("details").open || el.checkVisibility(); })()`);
+    if (keyShown) throw new Error("the bare key is on show");
+    // A remove line, then the add line, then a line that checks the connection.
+    const lines = String(await page.eval(`document.getElementById("mcp-cmd").textContent`)).split("\n");
+    const add = lines.findIndex((l) => / mcp add condex /.test(l));
+    if (add < 1 || !/ mcp remove condex$/.test(lines[add - 1]!)) throw new Error(`expected a remove line then an add line, got ${JSON.stringify(lines)}`);
+    const addLine = lines[add]!;
+    if (!addLine.includes(`CONDEX_API_KEY=${mcpKey}`) || !addLine.includes(`"--" node "`) || !/server\.ts"$/.test(addLine)) {
+      throw new Error(`add line looks wrong: ${addLine}`);
     }
+    if (!/ mcp list/.test(lines[lines.length - 1]!)) throw new Error(`expected a last line that checks the connection, got ${lines[lines.length - 1]}`);
     const me = await page.eval(`fetch("/v1/me", { headers: { authorization: "Bearer " + ${JSON.stringify(mcpKey)} } }).then((r) => r.json())`) as { credential: { type: string; scopes: string[] } };
     if (me.credential.type !== "api_key" || me.credential.scopes.join() !== "publish,read,trade") throw new Error(`key has ${JSON.stringify(me.credential)}`);
+    const waiting = String(await page.eval(`document.getElementById("mcp-status-text").textContent`));
+    if (!/Waiting for Claude Code/.test(waiting)) throw new Error(`status says "${waiting}"`);
+    const tools = await page.eval(`document.querySelectorAll("#mcp-tools li").length`);
+    if (tools !== 9) throw new Error(`the dialog lists ${tools} tools, expected 9`);
     await shot("4-mcp-dialog");
     await page.eval(`document.getElementById("mcp-dialog").close()`);
     const focused = await page.eval(`document.activeElement?.id`);
     if (focused !== "wallet-btn") throw new Error(`after closing the dialog, focus is on ${focused}`);
-    return "key works for publish, read and trade; focus returns to the wallet button";
+    return "key works for publish, read and trade; 9 tools listed; focus returns to the wallet button";
   });
 
   await check("README demo buttons keep your wallet and MCP key (no hidden reset)", async () => {
@@ -201,6 +214,33 @@ try {
     if (await page.eval(`WALLET?.account`) !== "oneclick-user.testnet") throw new Error("the demo signed the wallet out");
     if (await sessionStatus(mcpKey) !== 200) throw new Error("the demo revoked the MCP key");
     return "demo passed; wallet still connected; MCP key still works";
+  });
+
+  await check("MCP: an agent saying hello shows as connected, and Disconnect MCP revokes its key", async () => {
+    // What the MCP server does when Claude Code starts it.
+    const hello = await page.eval(`fetch("/v1/mcp/hello", { method: "POST", headers: { authorization: "Bearer " + ${JSON.stringify(mcpKey)}, "content-type": "application/json" },
+      body: JSON.stringify({ client: "condex-mcp", tools: ["condex_whoami", "condex_publish_insight"] }) }).then((r) => r.status)`);
+    if (hello !== 200) throw new Error(`hello answered ${hello}`);
+    await page.waitFor(`document.getElementById("mcp-chip").classList.contains("on") && /Connected since/.test(document.getElementById("status-mcp").textContent)`, 10_000);
+    await page.click("#wallet-btn");
+    await page.waitFor(`!document.getElementById("wallet-menu").hidden`);
+    const menu = await page.eval(`({ create: document.getElementById("menu-mcp").hidden, off: document.getElementById("menu-mcp-off").hidden })`) as { create: boolean; off: boolean };
+    if (!menu.create || menu.off) throw new Error("while an agent is connected the menu should offer Disconnect MCP instead of Create an MCP key");
+    // A notice can be on screen at the same time as the menu: the menu must stay on top of it.
+    const onTop = await page.eval(`(() => {
+      showNotice("A notice that is on screen while the wallet menu is open.");
+      const box = document.getElementById("menu-account").getBoundingClientRect();
+      const el = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return !!el && !!el.closest("#wallet-menu");
+    })()`);
+    if (!onTop) throw new Error("a notice covers the wallet menu");
+    await shot("4b-mcp-connected");
+    await page.click("#menu-mcp-off"); // asks for confirmation, which this script accepts
+    await page.waitFor(`!document.getElementById("mcp-chip").classList.contains("on")`, 10_000);
+    if (await sessionStatus(mcpKey) !== 401) throw new Error("the agent's key still works after Disconnect MCP");
+    await noticeShows(`/MCP disconnected/`);
+    if (await page.eval(`WALLET?.account`) !== "oneclick-user.testnet") throw new Error("disconnecting MCP signed the wallet out");
+    return "chip and status turned connected; Disconnect MCP revoked the key and left the wallet connected";
   });
 
   await check("README demo buttons recover after a server restart and keep Bob's balance topped up", async () => {
@@ -260,7 +300,12 @@ try {
     return "one click → connected";
   });
 
+  // The console checks the session by itself every few seconds. The next three checks each test one
+  // other way of noticing a dead session, so they switch that background check off first.
+  const stopStatusPolling = () => page.eval(`window.refreshStatus = async () => {}`);
+
   await check("Reset all data while connected signs the wallet out and says why", async () => {
+    await stopStatusPolling();
     await page.click(`[data-action="reset"]`);
     await page.waitFor(`WALLET === null`);
     await noticeShows(`/revoked its MCP keys/`);
@@ -269,6 +314,7 @@ try {
   });
 
   await check("a session ended by the server is noticed when the menu opens", async () => {
+    await stopStatusPolling();
     await page.eval(`document.getElementById("notice").hidden = true`);
     await oneClickConnect("oneclick-user.testnet");
     await page.eval(`fetch("/v1/dev/reset", { method: "POST" })`); // what a server restart does to memory storage
@@ -279,6 +325,7 @@ try {
   });
 
   await check("after a server-side reset, a reload shows Connect wallet and clears the stored session", async () => {
+    await stopStatusPolling();
     await oneClickConnect("oneclick-user.testnet");
     await page.eval(`fetch("/v1/dev/reset", { method: "POST" })`);
     await page.goto(`${origin}/test`);
@@ -287,6 +334,17 @@ try {
     if (stored !== null) throw new Error("the dead session is still stored");
     await noticeShows(`/session ended/`);
     return "stored session dropped; notice shown";
+  });
+
+  await check("status panel: a session ended by the server is noticed by itself within seconds", async () => {
+    await page.eval(`document.getElementById("notice").hidden = true`);
+    await oneClickConnect("oneclick-user.testnet");
+    await page.waitFor(`/Connected as oneclick-user\\.testnet/.test(document.getElementById("status-wallet").textContent)`);
+    await page.eval(`fetch("/v1/dev/reset", { method: "POST" })`);
+    await page.waitFor(`WALLET === null`, 10_000); // nobody clicks anything: the background check finds it
+    await noticeShows(`/session ended/`);
+    await page.waitFor(`/Not connected/.test(document.getElementById("status-wallet").textContent)`);
+    return "signed out with a notice, and the status panel says Not connected";
   });
 
   await check("Switch wallet… shows every way to connect; Test wallet works", async () => {
@@ -373,6 +431,7 @@ try {
     if (r.overflow > 0) throw new Error(`page scrolls sideways by ${r.overflow}px`);
     if (r.overlap) throw new Error("the title overlaps the navbar buttons");
     if (r.walletRight > 40) throw new Error(`wallet button is ${r.walletRight}px from the right edge`);
+    if (r.walletRight < 8) throw new Error(`wallet button is cut off at the screen edge (${r.walletRight}px from it)`);
     return `360px wide: no overlap; wallet button ${r.walletRight}px from the right`;
   });
 

@@ -5,6 +5,14 @@ import type { Ledger } from "./ledger/ledger.ts";
 import type { AccessKeyChecker } from "./near/accessKeys.ts";
 import type { MessageSigner } from "./near/nearCli.ts";
 
+/** An MCP server that has said hello for one API key. Kept in memory only: it describes a live process. */
+export interface McpConnection {
+  connectedAt: string;
+  lastSeenAt: string;
+  client: string;
+  tools: string[];
+}
+
 /** Everything a service function needs. Built once in `createApp`. */
 export interface Ctx {
   config: Config;
@@ -14,4 +22,6 @@ export interface Ctx {
   accessKeys: AccessKeyChecker;
   /** Dev mode only: signs sign-in messages with this computer's near-cli wallet. null when unavailable. */
   nearCli: MessageSigner | null;
+  /** MCP servers that have connected, by API key id. */
+  mcp: Map<string, McpConnection>;
 }

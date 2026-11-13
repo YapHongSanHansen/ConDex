@@ -26,8 +26,8 @@
   .brand h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
   .nav-right { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
   .wallet { position: relative; min-width: 0; }
-  #wallet-btn { min-height: 34px; min-width: 0; max-width: min(260px, 45vw); }
-  .notice { position: fixed; top: 62px; right: 16px; z-index: 30; max-width: min(380px, calc(100vw - 32px)); display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--warn); box-shadow: 0 10px 30px rgb(0 0 0 / .15); font-size: 13px; }
+  #wallet-btn { min-height: 34px; min-width: 0; max-width: min(260px, 45vw, 100%); }
+  .notice { position: fixed; top: 62px; right: 16px; z-index: 15; max-width: min(380px, calc(100vw - 32px)); display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--warn); box-shadow: 0 10px 30px rgb(0 0 0 / .15); font-size: 13px; }
   .notice button { padding: 0 6px; border: 0; background: transparent; }
   #wallet-btn .acct { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wallet-menu { position: absolute; right: 0; top: calc(100% + 6px); width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / .15); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
@@ -55,6 +55,26 @@
   .msg { margin: 0; font-size: 13px; color: var(--fail); }
   .msg:empty { display: none; }
   .small { font-size: 12px; color: var(--muted); }
+  .mcp-status { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--warn); font-size: 13px; line-height: 1.45; }
+  .mcp-status .dot { flex: none; width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; background: var(--warn); animation: mcp-pulse 1.4s ease-in-out infinite; }
+  .mcp-status.ok { border-color: var(--pass); background: color-mix(in srgb, var(--pass) 10%, transparent); }
+  .mcp-status.ok .dot { background: var(--pass); animation: none; }
+  .mcp-status.bad { border-color: var(--fail); }
+  .mcp-status.bad .dot { background: var(--fail); animation: none; }
+  @keyframes mcp-pulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .mcp-status .dot { animation: none; } }
+  ol.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+  ol.steps li > pre, ol.steps li > .row { margin-top: 6px; }
+  .tools { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; }
+  .tools li { padding: 8px 10px; border-top: 1px solid var(--border); font-size: 12px; display: grid; grid-template-columns: 16px 1fr; gap: 8px; }
+  .tools li:first-child { border-top: 0; }
+  .tools .tick { color: var(--muted); }
+  .tools.live .tick { color: var(--pass); }
+  .tools code { font-weight: 600; }
+  .tools .desc { color: var(--muted); display: block; margin-top: 2px; }
+  details.help { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  details.help summary { cursor: pointer; font-weight: 600; }
+  details.help > *:not(summary) { margin-top: 8px; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; padding: 16px 20px; align-items: start; }
   @media (max-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; } }
   section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
@@ -75,7 +95,7 @@
   input, select, textarea { font: 13px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; width: 100%; min-width: 0; }
   textarea { min-height: 110px; resize: vertical; }
   .full { grid-column: 1 / -1; }
-  aside { position: sticky; top: 70px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 82px); }
+  aside { position: sticky; top: 70px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 82px); overflow-y: auto; }
   @media (max-width: 1000px) { aside { position: static; max-height: none; } }
   .state { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; align-items: center; font-size: 12px; }
   .state input { padding: 3px 6px; font-size: 12px; }
@@ -83,7 +103,7 @@
   .bal { background: var(--code); border-radius: 7px; padding: 8px; }
   .bal .k { font-size: 11px; color: var(--muted); }
   .bal .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  #log { overflow: auto; min-height: 160px; flex: 1; font: 12px ui-monospace, Consolas, monospace; }
+  #log { overflow: auto; min-height: 200px; flex: 1 0 200px; font: 12px ui-monospace, Consolas, monospace; }
   #log details { border-bottom: 1px solid var(--border); padding: 4px 0; }
   #log summary { cursor: pointer; display: flex; gap: 6px; flex-wrap: wrap; }
   #log pre { white-space: pre-wrap; word-break: break-word; background: var(--code); padding: 6px; border-radius: 6px; margin: 4px 0; max-height: 280px; overflow: auto; }
@@ -97,6 +117,29 @@
   .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
   .panel-head h2 { margin: 0; }
   #autorun-result { display: none; }
+  .lamp { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--border); margin-top: 4px; }
+  .lamp.on { background: var(--pass); }
+  .lamp.wait { background: var(--warn); animation: mcp-pulse 1.4s ease-in-out infinite; }
+  .lamp.bad { background: var(--fail); }
+  @media (prefers-reduced-motion: reduce) { .lamp.wait { animation: none; } }
+  .status-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .status-list li { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; }
+  .status-list b { display: block; }
+  .danger-btn { margin-top: 6px; padding: 3px 10px; font-size: 12px; border-color: var(--fail); color: var(--fail); }
+  .danger-btn:hover { background: color-mix(in srgb, var(--fail) 10%, transparent); border-color: var(--fail); }
+  .status-list span.txt { color: var(--muted); font-size: 12px; line-height: 1.4; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 99px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .chip .lamp { margin-top: 0; width: 8px; height: 8px; }
+  .chip.on { color: var(--text); border-color: var(--pass); }
+  @media (max-width: 700px) { .chip .long { display: none; } }
+  .pub-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow: auto; }
+  .pub-list li { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+  .pub-list .t { font-size: 13px; font-weight: 600; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .pub-list .meta { color: var(--muted); }
+  .pub-list .tokenid { display: flex; gap: 6px; align-items: center; }
+  .pub-list code { font: 11px ui-monospace, Consolas, monospace; background: var(--code); padding: 2px 5px; border-radius: 4px; word-break: break-all; }
+  .pub-list button { padding: 2px 8px; font-size: 11px; }
+  .tag.mine { background: color-mix(in srgb, var(--pass) 18%, transparent); color: var(--text); }
 </style>
 </head>
 <body>
@@ -105,12 +148,14 @@
     <h1>ConDex</h1><span class="tag">Test console</span>
   </div>
   <div class="nav-right">
+    <span class="chip" id="mcp-chip" title="Claude Code connection"><span class="lamp" id="mcp-chip-lamp"></span><span id="mcp-chip-text">MCP</span></span>
     <button id="run-all" title="Reset the data, then click every test button in order"><span class="dot"></span><span>Run <span class="long">every button</span></span></button>
     <div class="wallet">
       <button class="primary" id="wallet-btn" aria-haspopup="dialog" aria-controls="wallet-menu" aria-expanded="false">Connect wallet</button>
       <div class="wallet-menu" id="wallet-menu" hidden>
         <div class="menu-account"><b id="menu-account"></b><span id="menu-check"></span></div>
         <button id="menu-mcp">Create an MCP key</button>
+        <button id="menu-mcp-off" hidden>Disconnect MCP</button>
         <button id="menu-switch">Switch wallet…</button>
         <button id="menu-disconnect">Disconnect</button>
       </div>
@@ -168,14 +213,33 @@
     <button value="close" aria-label="Close">✕</button>
   </form>
   <div class="dialog-body">
-    <p>It lets an agent publish, read and trade as <b id="mcp-account"></b>. <span id="mcp-lifetime"></span></p>
-    <p><span class="step">1.</span> Press <b>Copy commands</b>, paste into your terminal (PowerShell, cmd or bash) and press Enter. The key is already inside these commands.</p>
-    <pre class="cmd" id="mcp-cmd"></pre>
-    <div class="row"><button class="primary" id="mcp-copy">Copy commands</button></div>
-    <p class="small">The first line removes an older <code>condex</code> entry; it's fine if it says none was found.</p>
-    <p><span class="step">2.</span> Restart Claude Code (or reconnect it from <code>/mcp</code>) so it picks up the new key.</p>
-    <details>
-      <summary class="small">Show the key on its own (shown only once; don't paste it into a terminal by itself, it isn't a command)</summary>
+    <p class="small">It lets an agent publish, read and trade as <b id="mcp-account"></b>. <span id="mcp-lifetime"></span></p>
+
+    <div class="mcp-status" id="mcp-status" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><div id="mcp-status-text"></div></div>
+
+    <ol class="steps">
+      <li>
+        <b>Press Copy, paste into your terminal and press Enter.</b> The key is already inside these lines. The first line removes an older <code>condex</code> entry, so it's fine if it says none was found. You should end with <code>✔ Connected</code>.
+        <p class="small" id="mcp-pathwarn" hidden></p>
+        <pre class="cmd" id="mcp-cmd"></pre>
+        <div class="row"><button class="primary" id="mcp-copy">Copy</button></div>
+      </li>
+      <li><b>Start a new Claude Code chat</b> (or type <code>/mcp</code>). Tools load only when a chat starts.</li>
+    </ol>
+
+    <details class="help" id="mcp-notfound" hidden>
+      <summary>Claude Code not found</summary>
+      <div id="mcp-notfound-body"></div>
+    </details>
+
+    <details class="help" id="mcp-tools-box">
+      <summary id="mcp-tools-summary">Tools your agent gets</summary>
+      <ul class="tools" id="mcp-tools"></ul>
+    </details>
+
+    <details class="help">
+      <summary>Show the key on its own</summary>
+      <p class="small">Shown only once. Don't paste it into a terminal by itself: it isn't a command.</p>
       <pre class="cmd" id="mcp-key"></pre>
     </details>
   </div>
@@ -185,6 +249,18 @@
   <main id="sections"></main>
 
   <aside>
+    <section id="status-panel" aria-labelledby="status-title">
+      <div class="panel-head"><h2 id="status-title">Status</h2></div>
+      <ul class="status-list" aria-live="polite">
+        <li><span class="lamp" id="lamp-wallet"></span><div><b>Wallet</b><span class="txt" id="status-wallet"></span></div></li>
+        <li><span class="lamp" id="lamp-mcp"></span><div><b>Claude Code (MCP)</b><span class="txt" id="status-mcp"></span><button id="status-mcp-off" class="danger-btn" hidden>Disconnect</button></div></li>
+        <li><span class="lamp" id="lamp-pub"></span><div><b>Published</b><span class="txt" id="status-pub"></span></div></li>
+      </ul>
+    </section>
+    <section id="published-panel" aria-labelledby="published-title">
+      <div class="panel-head"><h2 id="published-title">Published insights</h2><button id="pub-refresh">Refresh</button></div>
+      <ul class="pub-list" id="pub-list"></ul>
+    </section>
     <section>
       <div class="panel-head"><h2>Balances (test NEAR)</h2><button data-inline="refresh-balances">Refresh</button></div>
       <div class="balances">
@@ -1061,6 +1137,7 @@ function connected(b) {
   if (previous && previous !== WALLET.token) call("POST", "/v1/auth/logout", { key: previous });
   saveWallet();
   renderWallet();
+  refreshStatus();
   hideNotice();
   connectDialog.close();
   walletBtn.focus();
@@ -1070,6 +1147,7 @@ function signedOut(reason) {
   WALLET = null;
   saveWallet();
   renderWallet();
+  refreshStatus();
   if (reason) {
     log("INFO", reason, "–", { info: reason });
     showNotice(reason);
@@ -1178,6 +1256,242 @@ document.getElementById("test-connect").addEventListener("click", async (e) => {
   }
 });
 
+// ---- live status: wallet, Claude Code (MCP) connection, published insights ----
+// Polls quietly (plain fetch, not call()) so the request log is not flooded.
+async function quiet(path, key) {
+  try {
+    const res = await fetch(path, key ? { headers: { authorization: "Bearer " + key } } : undefined);
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : null };
+  } catch { return { status: 0, body: null }; }
+}
+const setLamp = (id, kind) => { document.getElementById(id).className = "lamp " + kind; };
+let lastPublishedCount = null;
+let refreshing = false;
+
+function renderPublished(tokens) {
+  const ul = document.getElementById("pub-list");
+  if (!tokens.length) {
+    const li = document.createElement("li");
+    li.className = "meta";
+    li.textContent = "Nothing published yet. Ask Claude Code to publish a conversation, or use section 2 below.";
+    ul.replaceChildren(li);
+    return;
+  }
+  ul.replaceChildren(...tokens.slice().reverse().map((t) => {
+    const li = document.createElement("li");
+    const title = document.createElement("div"); title.className = "t";
+    title.append(document.createTextNode(t.title));
+    if (WALLET && t.creator.near_account_id === WALLET.account) { const m = document.createElement("span"); m.className = "tag mine"; m.textContent = "yours"; title.append(m); }
+    if (t.expired) { const e = document.createElement("span"); e.className = "tag"; e.textContent = "expired"; title.append(e); }
+    const meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = [t.market ?? "no market", "v" + t.version, t.fee_per_filled_order.near + " NEAR per filled order", "free to read", t.message_count + " messages"].join(" · ");
+    const who = document.createElement("div"); who.className = "meta";
+    who.textContent = "by " + t.creator.near_account_id + (t.expires_at ? " · expires " + new Date(t.expires_at).toLocaleString() : "") + " · minted on " + (t.mint?.ledger ?? "?") + (t.mint?.tx ? " (" + t.mint.tx + ")" : "");
+    const idRow = document.createElement("div"); idRow.className = "tokenid";
+    const code = document.createElement("code"); code.textContent = t.token_id;
+    const btn = document.createElement("button"); btn.textContent = "Copy token ID";
+    btn.addEventListener("click", (e) => copyText(code, e.currentTarget, "Copy token ID"));
+    idRow.append(code, btn);
+    const hashRow = document.createElement("div"); hashRow.className = "tokenid";
+    const hashLabel = document.createElement("span"); hashLabel.className = "meta"; hashLabel.textContent = "Hash";
+    const hashCode = document.createElement("code"); hashCode.textContent = t.content_hash;
+    const hashBtn = document.createElement("button"); hashBtn.textContent = "Copy hash";
+    hashBtn.addEventListener("click", (e) => copyText(hashCode, e.currentTarget, "Copy hash"));
+    hashRow.append(hashLabel, hashCode, hashBtn);
+    li.append(title, meta, who, idRow, hashRow);
+    return li;
+  }));
+}
+
+function setChip(kind, text) {
+  document.getElementById("mcp-chip").className = "chip" + (kind === "on" ? " on" : "");
+  setLamp("mcp-chip-lamp", kind);
+  document.getElementById("mcp-chip-text").innerHTML = text;
+}
+
+/** While an agent is connected the wallet menu offers Disconnect instead of Create an MCP key. */
+function setMcpConnectedUi(connected) {
+  document.getElementById("menu-mcp").hidden = connected;
+  document.getElementById("menu-mcp-off").hidden = !connected;
+  document.getElementById("status-mcp-off").hidden = !connected;
+}
+
+async function disconnectMcp() {
+  if (!WALLET) return;
+  if (!confirm("Disconnect Claude Code from ConDex?\n\nThis revokes the MCP key, so the agent can no longer use ConDex until you create a new key.")) return;
+  closeWalletMenu();
+  stopMcpPoll();
+  if (mcpDialog.open) mcpDialog.close();
+  const res = await call("POST", "/v1/mcp/disconnect", { key: WALLET.token });
+  if (res.status === 401) { signedOut(SESSION_ENDED); return; }
+  if (res.status !== 200) { showNotice(res.body?.error?.message ?? `Could not disconnect (HTTP ${res.status}).`); return; }
+  showNotice("MCP disconnected. To also remove it from Claude Code, run: claude mcp remove condex");
+  await refreshStatus();
+}
+document.getElementById("menu-mcp-off").addEventListener("click", disconnectMcp);
+document.getElementById("status-mcp-off").addEventListener("click", disconnectMcp);
+
+async function refreshStatus() {
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    const t = await quiet("/v1/tokens");
+    if (t.status === 200) {
+      const tokens = t.body.tokens ?? [];
+      renderPublished(tokens);
+      const mine = WALLET ? tokens.filter((x) => x.creator.near_account_id === WALLET.account) : [];
+      if (lastPublishedCount !== null && tokens.length > lastPublishedCount) {
+        const newest = tokens[tokens.length - 1];
+        showNotice('New insight published: "' + newest.title + '" by ' + newest.creator.near_account_id + ".");
+      }
+      lastPublishedCount = tokens.length;
+      setLamp("lamp-pub", tokens.length ? "on" : "");
+      document.getElementById("status-pub").textContent = tokens.length
+        ? tokens.length + " insight" + (tokens.length === 1 ? "" : "s") + " on the server" + (WALLET ? ", " + mine.length + " by you" : "") + ". Latest: " + tokens[tokens.length - 1].title
+        : "Nothing published yet.";
+    } else {
+      setLamp("lamp-pub", "bad");
+      document.getElementById("status-pub").textContent = "Can't reach the ConDex server. Is it running?";
+    }
+
+    if (!WALLET) {
+      setMcpConnectedUi(false);
+      setLamp("lamp-wallet", "");
+      document.getElementById("status-wallet").textContent = "Not connected. Click Connect wallet (top right).";
+      setLamp("lamp-mcp", "");
+      document.getElementById("status-mcp").textContent = "Connect a wallet first, then create an MCP key from the wallet menu.";
+      setChip("", '<span class="long">MCP </span>off');
+      return;
+    }
+    setLamp("lamp-wallet", "on");
+    document.getElementById("status-wallet").textContent = "Connected as " + WALLET.account + ".";
+
+    const k = await quiet("/v1/keys", WALLET.token);
+    if (k.status === 401) { signedOut(SESSION_ENDED); return; }
+    const keys = (k.body?.keys ?? []).filter((x) => !x.revoked_at && (x.label === "MCP agent" || x.mcp));
+    const live = keys.find((x) => x.mcp);
+    setMcpConnectedUi(!!live);
+    if (live) {
+      const since = new Date(live.mcp.connectedAt).toLocaleTimeString();
+      setLamp("lamp-mcp", "on");
+      document.getElementById("status-mcp").textContent = "Connected since " + since + ". " + live.mcp.tools.length + " tools ready in that Claude Code chat (key " + live.prefix + "…).";
+      setChip("on", '<span class="long">MCP </span>connected');
+    } else if (keys.length) {
+      setLamp("lamp-mcp", "wait");
+      document.getElementById("status-mcp").textContent = "Key created, but Claude Code has not connected yet. Run the two lines, then start a new Claude Code chat or type /mcp and reconnect.";
+      setChip("wait", '<span class="long">MCP </span>waiting');
+    } else {
+      setLamp("lamp-mcp", "");
+      document.getElementById("status-mcp").textContent = "No MCP key yet. Wallet menu → Create an MCP key.";
+      setChip("", '<span class="long">MCP </span>no key');
+    }
+  } finally {
+    refreshing = false;
+  }
+}
+document.getElementById("pub-refresh").addEventListener("click", () => refreshStatus());
+setInterval(() => { if (!document.hidden) refreshStatus(); }, 3000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshStatus(); });
+
+// ---- MCP key dialog: command, live connection status, tool list ----
+let mcpPoll = null;
+let mcpTools = [];
+let mcpCommands = "";
+const mcpStatus = document.getElementById("mcp-status");
+const mcpStatusText = document.getElementById("mcp-status-text");
+
+function setMcpStatus(kind, html) {
+  mcpStatus.className = "mcp-status" + (kind ? " " + kind : "");
+  mcpStatusText.innerHTML = html;
+}
+
+function renderMcpTools(live) {
+  document.getElementById("mcp-tools-summary").textContent = mcpTools.length + " tools your agent gets" + (live ? " (ready)" : "");
+  const ul = document.getElementById("mcp-tools");
+  ul.className = "tools" + (live ? " live" : "");
+  ul.replaceChildren(...mcpTools.map((t) => {
+    const li = document.createElement("li");
+    const tick = document.createElement("span");
+    tick.className = "tick"; tick.textContent = live ? "✓" : "○";
+    const body = document.createElement("div");
+    const name = document.createElement("code"); name.textContent = t.name;
+    const desc = document.createElement("span"); desc.className = "desc"; desc.textContent = t.title + " · " + t.description;
+    body.append(name, desc);
+    li.append(tick, body);
+    return li;
+  }));
+}
+
+async function fetchClaudeCli() {
+  try {
+    const res = await fetch("/v1/dev/claude-cli");
+    return res.ok ? await res.json() : null;
+  } catch { return null; }
+}
+
+/**
+ * Pasting this should end with a clear verdict in the terminal. "--" is quoted because Claude's PowerShell
+ * launcher drops a bare --. The remove line makes pasting again replace an old entry. When `claude` is not on
+ * PATH, a short variable holds its full path. Windows shells get plain lines (PowerShell 5 has no && or ||).
+ */
+function buildMcpCommands(secret, cli) {
+  const win = /windows/i.test(navigator.userAgent);
+  const viaVar = !win && cli && !cli.onPath && cli.fallback;
+  const bin = viaVar ? '"$C"' : "claude";
+  const lines = [];
+  if (viaVar) lines.push(`C="${cli.fallback}"`);
+  lines.push(`${bin} mcp remove condex`);
+  lines.push(`${bin} mcp add condex --env CONDEX_API_KEY=${secret} --env CONDEX_API_URL=${location.origin} "--" node "${MCP_SERVER_PATH}"`);
+  lines.push(win
+    ? `${bin} mcp list`
+    : `${bin} mcp list 2>&1 | grep "condex.*Connected" && echo "✅ ConDex connected. Open a new Claude Code chat (or type /mcp)." || echo "❌ Not connected. See the lines above."`);
+  return lines.join("\n");
+}
+
+function showPathHelp(cli) {
+  const warn = document.getElementById("mcp-pathwarn");
+  const missing = document.getElementById("mcp-notfound");
+  const body = document.getElementById("mcp-notfound-body");
+  const viaFullPath = !!(cli && !cli.onPath && cli.fallback);
+  warn.hidden = !viaFullPath;
+  warn.textContent = viaFullPath ? "claude isn't on your PATH, so this uses its full path." : "";
+  const notFound = !cli || (!cli.onPath && !cli.fallback);
+  missing.hidden = !notFound;
+  missing.open = notFound;
+  body.textContent = !cli
+    ? "Couldn't check this computer. Make sure Claude Code is installed, then open a new terminal."
+    : "Install Claude Code from https://claude.com/claude-code, open a new terminal, then paste the lines again.";
+}
+
+function stopMcpPoll() { if (mcpPoll) { clearInterval(mcpPoll); mcpPoll = null; } }
+
+function watchMcp(keyId, account) {
+  stopMcpPoll();
+  const started = Date.now();
+  const tick = async () => {
+    if (!WALLET) { stopMcpPoll(); return; }
+    const res = await call("GET", "/v1/keys", { key: WALLET.token });
+    if (res.status === 401) { stopMcpPoll(); setMcpStatus("bad", "<b>Wallet session ended.</b> Reconnect, then create a new key."); return; }
+    const k = res.body?.keys?.find((x) => x.id === keyId);
+    if (!k) { stopMcpPoll(); setMcpStatus("bad", "<b>This key is gone.</b> Create a new one."); return; }
+    if (k.mcp) {
+      stopMcpPoll();
+      const at = new Date(k.mcp.connectedAt).toLocaleTimeString();
+      setMcpStatus("ok", "<b>Connected</b> as " + account + " since " + at + ". Try: <i>\"List my ConDex insights\"</i>");
+      renderMcpTools(true);
+      if (!mcpDialog.open) showNotice("Claude Code connected as " + account + ". " + k.mcp.tools.length + " tools ready.");
+      return;
+    }
+    if (Date.now() - started > 3 * 60 * 1000) {
+      setMcpStatus("", "<b>Still waiting.</b> Did the lines print ✅? Then open a <b>new Claude Code chat</b> or type <code>/mcp</code>.");
+    }
+    if (Date.now() - started > 15 * 60 * 1000) stopMcpPoll();
+  };
+  mcpPoll = setInterval(tick, 2000);
+  tick();
+}
+
 document.getElementById("menu-mcp").addEventListener("click", async () => {
   walletBtn.focus(); // move focus out of the menu first, so closing the dialog returns it to the button
   closeWalletMenu();
@@ -1187,15 +1501,23 @@ document.getElementById("menu-mcp").addEventListener("click", async () => {
   document.getElementById("mcp-account").textContent = WALLET.account;
   document.getElementById("mcp-key").textContent = res.body.secret;
   document.getElementById("mcp-lifetime").textContent = STORAGE === "memory"
-    ? "It stops working when the server restarts or its data is reset, because data is kept in memory."
-    : "It keeps working until it is revoked or the data is reset.";
+    ? "Stops working when the server restarts."
+    : "Works until revoked.";
   // Two lines, so pasting again after a restart replaces the old key instead of failing with
   // "already exists". "--" is quoted because Claude's PowerShell launcher drops a bare --.
-  document.getElementById("mcp-cmd").textContent =
-    `claude mcp remove condex\nclaude mcp add condex --env CONDEX_API_KEY=${res.body.secret} --env CONDEX_API_URL=${location.origin} "--" node "${MCP_SERVER_PATH}"`;
+  // Ask the server again where its MCP script lives, so a page left open across a restart or move can't print a stale path.
+  try { const h = await (await fetch("/health")).json(); if (h.mcp_server) MCP_SERVER_PATH = h.mcp_server; } catch { /* keep the last known path */ }
+  const cli = await fetchClaudeCli();
+  mcpCommands = buildMcpCommands(res.body.secret, cli);
+  document.getElementById("mcp-cmd").textContent = mcpCommands;
+  setMcpStatus("", "<b>Waiting for Claude Code…</b>");
+  try { mcpTools = (await (await fetch("/v1/mcp/tools")).json()).tools ?? []; } catch { mcpTools = []; }
+  renderMcpTools(false);
+  showPathHelp(cli);
   mcpDialog.showModal();
+  watchMcp(res.body.id, WALLET.account);
 });
-document.getElementById("mcp-copy").addEventListener("click", (e) => copyText(document.getElementById("mcp-cmd"), e.currentTarget, "Copy commands"));
+document.getElementById("mcp-copy").addEventListener("click", (e) => copyText(document.getElementById("mcp-cmd"), e.currentTarget, "Copy"));
 
 document.getElementById("menu-disconnect").addEventListener("click", async () => {
   const token = WALLET?.token;
@@ -1240,6 +1562,7 @@ document.getElementById("menu-switch").addEventListener("click", async () => {
     }
   }
   renderWallet();
+  refreshStatus();
 })();
 
 ACTION_BY_ID.health.run().catch(() => {});

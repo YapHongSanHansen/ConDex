@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { buildMcpServer } from "../src/mcp/server.ts";
+import { displayPath, findClaudeCli } from "../src/mcp/claudeCli.ts";
+import { buildMcpServer, sayHello } from "../src/mcp/server.ts";
 import { ETH_MESSAGES, connectWallet, startServer } from "./helpers.ts";
 
 const srv = await startServer();
@@ -72,4 +73,76 @@ test("a creator's agent publishes and a borrower's agent reads and trades over M
 
   const noKey = await connect(undefined);
   assert.equal(json(await noKey.callTool({ name: "condex_whoami", arguments: {} })).isError, true);
+});
+
+test("an MCP server saying hello makes its key show as connected, with its tools", async () => {
+  const { api } = srv;
+  const session = (await connectWallet(api, "carol-mcp.testnet")).session;
+  const issued = (await api("POST", "/v1/keys", { key: session, body: { scopes: ["publish", "read"], label: "MCP agent" } })).body;
+
+  const before = (await api("GET", "/v1/keys", { key: session })).body.keys.find((k: { id: string }) => k.id === issued.id);
+  assert.equal(before.mcp, null, "a key nobody has used is not connected");
+
+  // Using the key for ordinary API calls does not count as an MCP connection.
+  await api("GET", "/v1/me", { key: issued.secret });
+  const stillNot = (await api("GET", "/v1/keys", { key: session })).body.keys.find((k: { id: string }) => k.id === issued.id);
+  assert.equal(stillNot.mcp, null);
+
+  // The wallet session cannot say hello: only the MCP key can.
+  assert.equal((await api("POST", "/v1/mcp/hello", { key: session, body: {} })).status, 400);
+
+  await sayHello({ apiUrl: srv.base, apiKey: issued.secret });
+  const after = (await api("GET", "/v1/keys", { key: session })).body.keys.find((k: { id: string }) => k.id === issued.id);
+  assert.ok(after.mcp.connectedAt);
+  assert.equal(after.mcp.client, "condex-mcp");
+  assert.ok(after.mcp.tools.includes("condex_publish_insight"));
+
+  const tools = (await api("GET", "/v1/mcp/tools")).body.tools.map((t: { name: string }) => t.name);
+  assert.equal(tools.length, 9);
+  assert.ok(tools.includes("condex_place_order"));
+
+  await sayHello({ apiUrl: srv.base, apiKey: "cdx_not-a-real-key" }); // must not throw
+});
+
+test("claude cli finder reports a CLI that is installed but not on PATH", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "condex-home-"));
+  const bin = join(home, ".vscode", "extensions", "anthropic.claude-code-9.9.9-darwin-arm64", "resources", "native-binary");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, process.platform === "win32" ? "claude.exe" : "claude"), "");
+  const found = findClaudeCli({ PATH: "" }, home);
+  assert.equal(found.onPath, null);
+  assert.ok(found.fallback?.includes("anthropic.claude-code-9.9.9"));
+  assert.deepEqual(findClaudeCli({ PATH: "" }, mkdtempSync(join(tmpdir(), "condex-empty-"))), { onPath: null, fallback: null });
+});
+
+test("disconnecting MCP revokes the key and clears the connected state", async () => {
+  const { api } = srv;
+  const session = (await connectWallet(api, "dave-mcp.testnet")).session;
+  const issued = (await api("POST", "/v1/keys", { key: session, body: { scopes: ["read"], label: "MCP agent" } })).body;
+  await sayHello({ apiUrl: srv.base, apiKey: issued.secret });
+  const connected = (await api("GET", "/v1/keys", { key: session })).body.keys.find((k: { id: string }) => k.id === issued.id);
+  assert.ok(connected.mcp);
+
+  // Only a wallet session can disconnect, not the agent's own key.
+  assert.equal((await api("POST", "/v1/mcp/disconnect", { key: issued.secret })).status, 403);
+
+  const res = await api("POST", "/v1/mcp/disconnect", { key: session });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.revoked, 1);
+  const after = (await api("GET", "/v1/keys", { key: session })).body.keys.find((k: { id: string }) => k.id === issued.id);
+  assert.ok(after.revoked_at);
+  assert.equal(after.mcp, null);
+  assert.equal((await api("GET", "/v1/me", { key: issued.secret })).status, 401, "the agent's key stops working");
+  assert.equal((await api("POST", "/v1/mcp/disconnect", { key: session })).body.revoked, 0, "nothing left to disconnect");
+});
+
+test("paths shown to people never include the home folder", () => {
+  assert.equal(displayPath("/Users/someone/code/ConDex/src/mcp/server.ts", "/Users/someone"), "$HOME/code/ConDex/src/mcp/server.ts");
+  assert.equal(displayPath("/opt/condex/server.ts", "/Users/someone"), "/opt/condex/server.ts");
+  assert.equal(displayPath("/Users/someoneelse/x", "/Users/someone"), "/Users/someoneelse/x");
+  const found = findClaudeCli({ PATH: "" }, "/nonexistent-home-for-test");
+  assert.deepEqual(found, { onPath: null, fallback: null });
 });
