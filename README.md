@@ -1,63 +1,300 @@
 # ConDex
 
-Borrow trading insights from AI conversations. Pay the creator when your agent uses one.
+**ConDex is a proof-backed intelligence marketplace for traders and their AI agents.** A trader selects the messages from a conversation with their agent and states the conditions of the idea, including when it expires. Their agent uploads them through MCP or the ConDex API. ConDex mints one NFT on NEAR for that exact version. The NFT records the thesis and, as people trade on it, its verified results.
 
-A trader can spend an hour with an AI working out when to enter a position and when to walk away. ConDex lets the trader publish that reasoning as a versioned insight on NEAR. Another agent can borrow it through a scoped API key. Borrowing is free. The creator earns the agreed fee on the first successful retrieval under that borrow.
+Other agents can use the token ID to read the thesis for free. A borrower pays a usage fee only when a trade they linked to that NFT receives a confirmed fill, and the fee goes to the creator. Each filled trade is recorded on the NFT as a proof of trade, and the creator’s score is calculated from those proofs alone.
 
-> **Build status** — Project design for the NEAR Hackathon. This repository currently contains the README. The API and NEAR testnet contract described below are planned.
-
----
+> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing, free reading and paying the creator per filled trade work today. Required expiry, recorded thesis conditions, trade matching, verified results, the creator score, the NEAR testnet contract and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
 
 ## The problem
 
-1. **The trade call loses the condition.** “Short ETH” and “short ETH if it breaks yesterday’s high and closes back below it” lead to different trades. In a conversation, the trigger, the reasoning, and the reason to walk away can sit several messages apart.
-2. **Sharing the whole chat reveals too much.** A creator may want to share a market observation while keeping their positions, wallet details, and unrelated messages private.
-3. **An agent often needs to wait before research becomes useful.** A setup can expire without ever triggering. An upfront purchase makes the borrower pay even when it only wanted to watch for a trade. The creator, meanwhile, needs a reliable record of the use that earned a fee.
+A call like “short ETH” can leave out the most useful parts of a trader’s conversation with their AI agent: when to enter, which evidence would invalidate the idea, and when to walk away. It rarely says when it stops being valid, so people act on it after it has gone stale. Nobody can check whether the person who shared it, or anyone else, traded it, or how that went. Sharing the entire chat can expose unrelated positions and wallet details.
 
-## The idea
+ConDex lets the creator share selected reasoning with explicit conditions and an expiry. It lets a borrower evaluate the thesis before deciding whether to trade, records what happened when the thesis was traded, and pays the creator a fee for each filled trade.
 
-The creator selects the relevant messages and approves an insight with a market, rationale, trigger, invalidation condition, and expiry. A NEAR token identifies that published version and links it to the creator’s payout account. The creator keeps the token. An agent borrows time-limited access to the insight under published terms.
+## From conversation to creator payout
 
-Each borrow comes with an API key scoped to one insight version, a billing rule, an expiry, and a fee cap approved by the borrower. The public preview shows the market, time horizon, and price so the agent can decide whether to borrow. The private instructions stay behind the API.
+1. **Publish from the creator’s agent.** The creator connects their agent to ConDex through the Model Context Protocol (MCP), or gives it a ConDex API key with publishing permission. The creator chooses which conversation or messages the agent may share and states the thesis conditions, including the expiry. The agent reminds the creator when the expiry is missing, then uploads the approved material and registers the thesis.
+2. **Mint the thesis NFT on NEAR.** ConDex mints one NFT for the published version. It records the creator, the publish time, the fingerprint of the conditions and conversation, the expiry, and the flat usage fee per filled trade. The approved conversation and conditions stay in private storage and are available through ConDex.
+3. **Borrow and read for free.** Another user’s agent calls the thesis by token ID using its own scoped credential. It can read the reasoning, check whether the conditions still apply, and decide to walk away. Reading, repeated calls, and expiry incur zero ConDex fees.
+4. **Authorise a linked trade.** If the borrower acts on the thesis, their wallet or authorised trading agent approves an order from their own account. ConDex binds the thesis version and fee quote to the order before submission, and accepts the link only if the order matches the thesis: the same market and direction, before the expiry. The borrower sees the fee and authorises its reservation. A key that reads research cannot sign trades.
+5. **Pay on confirmed execution.** ConDex checks the execution record for that exact order. Its first confirmed fill, including a partial fill, triggers one creator payout on NEAR and one proof of trade, recorded on the thesis NFT. Later fills and retries for the same order use the same receipt. A rejected order or an order confirmed cancelled or expired with no fills releases the reserve. While the outcome is unknown, settlement stays pending.
+6. **Score the result.** When the trade is closed, its closing fill is added to the proof of trade. The NFT’s verified results and the creator’s score are recalculated.
 
-## How it works
+For example, Alice publishes an ETH thesis: short ETH-USD on a 15-minute close back below yesterday’s high, invalid on a 1-hour close above the sweep high, expiring at 14:30 UTC on 14 November (the US market open), with a usage fee of 0.1 test NEAR per filled trade. Bob’s agent reads it three times for free. If Bob cancels his linked order before any fill, he pays Alice zero. If part of that order fills before cancellation, Alice earns 0.1 test NEAR, even if Bob later closes the trade at a loss. That loss is then recorded on the NFT and counts in the borrowers’ track record of Alice’s score. After 14:30 UTC on 14 November, nobody can link a new trade to this thesis.
 
-### One borrowed insight, from chat to receipt
+## Thesis conditions and expiry
 
-1. **Publish.** A creator selects an exchange about a failed ETH breakout. The excerpt explains why a move above the previous UTC day’s high followed by a 15-minute close back below it would matter. The creator sets an expiry and a flat retrieval fee.
-2. **Borrow.** A research agent reads the public preview and requests a key for that version. The borrower approves a fee cap. ConDex reserves the agreed fee and issues the key.
-3. **Retrieve or let expire.** The agent can fetch the excerpt for its own analysis. If the key expires unused, ConDex releases the reserve and the borrower pays nothing.
-4. **Settle.** On the first successful retrieval, ConDex records a receipt for the borrow and insight version. The NEAR contract uses that receipt to settle the creator’s fee once.
+A thesis is the published conversation plus its conditions. The conditions are separate fields, so they can be recorded, preserved and compared with real trades.
 
-### What the API key authorizes
+| Condition | What it records |
+| --- | --- |
+| Market | What is traded, for example ETH-USD. |
+| Direction | Long or short. |
+| Entry | When to enter, in the creator’s words. |
+| Invalidation | What would prove the idea wrong, in the creator’s words. |
+| Exit or target | Optional. When to take profit or close. |
+| Expiry date | The last day a trade can be linked to the thesis. Every thesis has one. |
+| Expiry time | The time on that day, in UTC, when the thesis depends on one. |
 
-In the proposed API, a research agent uses its key as a bearer credential to retrieve the approved excerpt:
+### Expiry controls
 
-```http
-GET /v1/borrows/{borrow_id}/insight
-Authorization: Bearer <borrow-api-key>
-```
+- **The date is required.** Every thesis version has an expiry date.
+- **The time depends on the thesis.** The creator adds a time when the idea depends on one, such as “by the US open”. Without a time, the thesis expires at the end of its expiry date, 23:59 UTC.
+- **The creator is reminded.** Before publishing, the creator’s agent asks for the expiry date and, where the thesis depends on one, the time.
+- **Without a date, ConDex’s AI sets one.** It evaluates the thesis and takes the date from the deadline, event or timeframe the thesis describes. The proof of thesis states that ConDex set the expiry, and why.
+- **The expiry is fixed once published.** It is part of the proof of thesis. Changing it means publishing a new version, which gets its own NFT.
+- **After the expiry,** ConDex issues no fee quote and links no new trade to the thesis. [What the expiry ends](#what-the-expiry-ends) lists what stops and what stays.
 
-The gateway checks the key’s scope, expiry, and budget before releasing the approved text. If the connection drops, the agent can fetch the same delivery again under the same valid borrow without a second fee. Revoking the key stops new requests.
+## Proof of thesis and proof of trade
+
+Each published thesis version is one NFT on NEAR, following the NEP-171 standard. The NFT is the proof of thesis, and every proof of trade is recorded on it. Together they show that a thesis existed in an exact form before anyone traded it, and what happened when it was traded.
+
+### Proof of thesis: the thesis NFT
+
+Minted once, when a thesis version is published. One NFT identifies one version of one thesis. It records:
+
+- the token ID and version;
+- the creator’s account;
+- the publish time;
+- the expiry date and time, and whether the creator or ConDex set it;
+- a fingerprint (hash) of the exact conditions and approved conversation;
+- the usage fee per filled trade, and who receives it;
+- a reference to every proof of trade linked to it.
+
+The publish time and the expiry use the fields that NEAR’s NFT metadata standard (NEP-177) already defines for them, `issued_at` and `expires_at`, so wallets and explorers can show them.
+
+Everything on NEAR is public, so only the fingerprint goes on chain. ConDex stores the conditions and the conversation and serves them to connected wallets. Anyone who holds them can recompute the fingerprint and compare it with NEAR, so neither the creator nor ConDex can alter a thesis after publishing.
+
+The original conditions are preserved permanently. An edit is a new version with a new NFT, and every earlier NFT stays on NEAR.
+
+The NFT stays with its creator. In this version it cannot be transferred.
+
+### Proof of trade
+
+Recorded on the thesis NFT when a real trade linked to it receives its first confirmed fill. It holds:
+
+- the thesis NFT it belongs to (token ID and fingerprint);
+- the trader’s account, and whether the trader is the creator or a borrower;
+- the order: market, direction, size and the time it was authorised;
+- the fill: time, price, quantity and the source of the evidence (a simulated fill, or which live venue confirmed it);
+- the usage fee paid, for a borrower’s trade;
+- the closing fill, added when the trade is closed, so the result can be calculated.
+
+### Verified results
+
+From its closed trades, each thesis NFT shows the verified result of that thesis alone: the number of trades, net return, net profit % and maximum drawdown %. They are calculated the same way as the [creator score](#creator-score). Nobody can enter a result by hand: every figure comes from a proof of trade.
+
+### Matching a thesis to a real trade
+
+A trade counts as a trade of the thesis only when all of these hold:
+
+1. It was linked to that exact thesis version before the order was submitted.
+2. It is in the thesis’s market.
+3. It opens in the thesis’s direction.
+4. It was authorised before the thesis expired.
+5. A connected execution route confirms that it was filled.
+
+ConDex refuses to link an order that fails checks 2 to 4. The entry and invalidation conditions are in the creator’s own words, so ConDex does not judge them automatically. The proof of trade shows the real fill price and time beside them for anyone to compare.
+
+A trade submitted independently outside a connected execution route has no reliable link to the thesis. ConDex can prove, charge for and score only a trade whose link and execution it can verify.
+
+## Pay per filled trade
+
+There is one charge, the usage fee: a flat fee per filled trade, paid by the borrower. The creator receives it.
+
+- **Reading is free.** Every read, repeated reads, and reads after the expiry cost nothing.
+- **The creator sets the fee** when publishing. It is fixed in the proof of thesis.
+- **The borrower pays once per filled order.** The fee is reserved when the borrower authorises a linked order and paid out on that order’s first confirmed fill, including a partial fill. Later fills and repeated confirmations charge nothing more.
+- **No fill, no fee.** An order that is rejected, cancelled or expired with no fills gets its reserve back.
+- **The fee does not depend on the result.** It is charged whether the trade later wins or loses.
+- **The contract decides who is paid.** Each thesis NFT has a revenue split in the NEAR contract: a list of accounts and percentages, set at publishing and fixed. In this version it has one entry, the creator’s payout account at 100%. Only fees that were actually collected are paid out.
+- **A creator’s own trades are free.** A creator who links their own trade to their own thesis pays no fee and earns none.
+
+### What the expiry ends
+
+A thesis can expire while its proof remains. The two are defined separately:
+
+| | After the expiry |
+| --- | --- |
+| The NFT, its proof of thesis and its trade record | Stay on NEAR permanently. |
+| Reading | Stays free. |
+| New fee quotes and linked trades | Refused. |
+| Usage fees | Paid only for orders that were authorised before the expiry and fill later. No other fee can arise, so the creator’s fee income from this thesis ends. |
+| Results | A trade opened before the expiry still records its result when it closes, and still counts in the verified results and the scores. |
+
+### Not in this version
+
+The thesis NFT is not a fractional or transferable revenue-sharing token. Splitting or selling the right to a thesis’s fees among other holders, for example with NEP-141 tokens, is a possible later version. Nothing above depends on it.
+
+## Creator score
+
+Every creator has a public score. It is calculated only from proofs of trade, so it reflects real, verified trades and nothing the creator reports about themselves. It is recalculated each time a matched trade is closed.
+
+The score keeps two track records and never merges them:
+
+| Track record | Trades counted | What it shows |
+| --- | --- | --- |
+| Creator’s own | The creator’s own trades linked to their own theses | Whether the creator trades their own ideas, and with what result |
+| Borrowers’ | Borrowers’ trades linked to the creator’s theses | How the theses worked for the people who traded them |
+
+Each track record reports three figures over its closed trades, with the number of trades they are based on:
+
+| Figure | How it is calculated |
+| --- | --- |
+| Net return | Total profit minus total loss, after trading costs and ConDex fees, in US dollars. |
+| Net profit % | Each trade’s net result as a percentage of its entry value, added up. This is the result of putting the same amount into every trade, so one large trade cannot dominate. |
+| Maximum drawdown % | The largest fall from a high point of that running total, taking the trades in the order they closed. |
+
+For example, four closed trades returning +5%, −3%, −4% and +10% give a net profit of +8%. The running total peaked at +5% and fell to −2%, so the maximum drawdown is 7%.
+
+A trade that is still open is listed but not counted until it closes.
 
 ## Where NEAR fits
 
 | Component | Planned responsibility |
 | --- | --- |
-| Creator interface and private storage | Import the chat, let the creator edit and redact the excerpt, and store the approved research privately. |
-| NEAR contract | Register the creator, version hash, and payout terms. Reserve the borrower’s fee budget and settle each usage receipt once. |
-| ConDex API | Issue scoped keys, deliver excerpts, and report successful retrievals to the NEAR contract. The prototype would trust the API to report deliveries accurately. |
+| MCP server and API | Accept authorised uploads from creators’ agents, remind them to set the expiry, issue scoped access, and serve theses by token ID. |
+| NEAR contract | Mint one NFT (NEP-171) per thesis version, record each proof of trade on it, hold its revenue split, reserve authorised fees, and pay each collected fee according to the split. |
+| Execution integration | Submit or track the authorised order, and verify its fill and its close. The prototype trusts this service to report the execution accurately. |
+| Private storage | Store the approved messages and thesis conditions off-chain. Only their fingerprint goes on NEAR. |
+| ConDex AI | Set the expiry date when the creator gives none, and record why. |
+| Score service | Calculate each NFT’s verified results and each creator’s score from the proofs of trade. |
 
-## Can users long or short an insight?
+## What the prototype does today
 
-A proposed ConDex market would let users take either side of a question such as “Will this insight earn at least 20 credits in settled usage fees by Friday?” The high-demand side wins at 20 credits or more. The low-demand side wins below 20. Borrowing a free API key contributes zero to that total.
+The API and code call a thesis an *insight*, and its fingerprint a `content_hash`.
 
-The planned first demo focuses on borrowing and settlement. A later test-credit market would need participants willing to fund both sides and rules for which fees qualify, including how it handles self-use.
+| Rule | In the prototype today |
+| --- | --- |
+| Expiry date required, with a reminder | Not built. The expiry is optional. |
+| ConDex’s AI sets a missing expiry | Not built. A thesis published without an expiry never expires. |
+| Expiry stops new trades | Built. After the expiry, fee quotes and linked orders are refused, and reading still works. |
+| Thesis conditions as fields | Partly. The market, title, summary and messages are recorded. Direction, entry, invalidation and target are not separate fields. |
+| Thesis NFT | Partly. Each version gets a token record with a fingerprint, creator, payout account and fee, on the mock ledger. It is not yet an NEP-171 NFT on NEAR, and the expiry is covered by the fingerprint but is not a field of its own. |
+| Original conditions preserved | Built. A published version cannot be edited. A change is a new version with a new token. |
+| Proof of trade on the NFT | Partly. ConDex keeps a receipt that links the borrower, thesis version, order and first fill, with the source of the evidence. Only the fee payment is written to the mock ledger. There is no closing fill. |
+| Verified results | Not built. |
+| Matching | Partly. The link is made before submission and the expiry is checked. Market and direction are not checked. |
+| Pay per filled trade, to the creator | Built, against the mock ledger. The whole fee goes to the payout account named at publishing. |
+| Creator’s own trades | Not built. A creator cannot link an order to their own thesis. |
+| Creator score | Not built. The creator’s public page shows counts only: theses, reads, paid orders and fees paid. |
 
-## Build status
+## Running the off-chain services
 
-- [ ] Publish a redacted insight and register its version on NEAR testnet.
-- [ ] Issue an expiring API key with a borrower-approved fee cap.
-- [ ] Demonstrate an information retrieval and a retry with one charge.
-- [ ] Demonstrate an expired borrow with zero charges.
-- [ ] Show the usage receipt and its corresponding creator payout on NEAR testnet.
+The code for these services is on the [`backend`](https://github.com/YapHongSanHansen/ConDex/tree/backend) branch. Switch to it before running the commands below.
+
+Requires Node.js 24 or later (it runs TypeScript directly). There is no database to install or set up.
+
+```sh
+npm install
+npm start            # API on http://localhost:8787, test console on http://localhost:8787/test
+npm run dev          # same, restarting whenever a source file changes
+npm test             # API flow tests and MCP tests
+npm run test:page    # opens the test console in headless Chrome/Edge and checks every button
+npm run typecheck
+```
+
+**Data lives in memory.** Nothing is written to disk, and everything (sign-ins, API keys, published insights, orders, mock balances) starts empty whenever the server restarts, including each automatic restart of `npm run dev`. After a restart, reconnect your wallet (one click) and create a new MCP key; the test console notices the ended session and says so, and **Run every button** sets the test data up again. To keep data between restarts instead, set `CONDEX_DB_PATH=data/condex.db` (a local SQLite file, built into Node).
+
+The test console has a button for every API action and every demo checklist item. **Run every button** resets the data, clicks each one in order and reports pass or fail.
+
+### Connect wallet (top right of the test console)
+
+- **My NEAR wallet on this computer** — one click. If your testnet account is in near-cli (`near account import-account`), ConDex asks near-cli to sign the sign-in message with the key in this computer's keychain. The first time, type your account name; after that, **Connect wallet** connects in one click. Only ConDex's own sign-in message is ever signed, and only for requests made on this computer from the console itself, in dev mode.
+- **My NEAR wallet, copy and paste** — run the near-cli command the console shows and paste what it prints. Use this when ConDex runs on a different computer from your wallet.
+- **Test wallet** — a made-up account with a throwaway key, for trying things out (dev mode only).
+
+Once connected, the button's menu creates an MCP key (with a ready-to-paste `claude mcp add` command), switches wallet, or disconnects. In dev mode the server checks the signature but not that the key belongs to the account; start it with `CONDEX_WALLET_KEY_CHECK=near-rpc` to also confirm that on NEAR (test wallets then stop working).
+
+### Dev mode stays on this computer
+
+Dev mode is for your own machine, so it is locked to it:
+
+- The server listens on `127.0.0.1` only (`CONDEX_HOST` changes that), so other machines on your network cannot reach it.
+- The dev routes (`/test`, `/v1/dev/*`, `/v1/sim/*`, one-click connect) also refuse requests from other websites, from host names other than `localhost`/`127.0.0.1`, and anything a proxy or tunnel passed on.
+- Without the on-chain check, an account only accepts the key it first signed in with, so nobody else can sign in as it. The test console keeps each test wallet's key in the browser for this.
+- **Do not expose the dev server through a tunnel** (ngrok, port forwarding). Tunnels that strip forwarding headers cannot be detected, and one-click connect signs with your keychain.
+
+### Access: connect a wallet first
+
+| | No wallet | Wallet connected |
+| --- | --- | --- |
+| Publisher pages (`GET /v1/publishers/:account`), insight list and previews | ✅ | ✅ |
+| Ledger explorer (`/v1/ledger/*`): the same data that will be public on NEAR | ✅ | ✅ |
+| Read conversations, publish, trade, deposit | 401 | ✅ with the session or an API key it issued |
+| Receipts | 401 | ✅ the borrower's and creator's own |
+| Create, list and revoke API keys for agents and MCP | 401 | ✅ with the session only |
+
+Connecting a wallet uses NEP-413 message signing; it sends no transaction:
+
+1. `POST /v1/auth/challenge` returns `{ message, nonce, recipient }`. The recipient is the website's domain (`CONDEX_AUTH_RECIPIENT`), and the message starts with "Sign in to ConDex at <domain>", so a user can see when a look-alike site asks them to sign in.
+2. The wallet signs it (`signMessage` in NEAR Wallet Selector, or `near message sign-nep413` in near-cli).
+3. `POST /v1/auth/verify` with `{ account_id, public_key, signature, nonce }`. The signature may be base64 (browser wallets) or `ed25519:<base58>` (near-cli). Redirect wallets such as MyNearWallet also sign the callback URL, so for them add `callback_url`: the exact callbackUrl the website gave the wallet, which must be on one of `CONDEX_ALLOWED_ORIGINS`. ConDex checks the signature and, with `CONDEX_WALLET_KEY_CHECK=near-rpc`, that the key is a full-access key of the account on NEAR. First sign-in creates the account. The response holds a session token (`cdxs_…`).
+
+Challenges last `CONDEX_CHALLENGE_TTL_SECONDS` (5 minutes by default). Anyone can request one, so each client address may request `CONDEX_SIGNINS_PER_MINUTE` (60) a minute and hold at most 20 unfinished ones, and at most 10,000 can be unfinished in total. Expired challenges and sessions are deleted. A temporary NEAR RPC problem returns a retryable 502, not "this is not your key".
+
+API keys (`cdx_…`) issued from a session keep working after sign-out until they are revoked, so a running agent is not cut off when the website tab closes. Sessions and keys remember whether the sign-in was checked on NEAR; a server running with `near-rpc` refuses ones made while the check was off.
+
+### Connecting an agent over MCP
+
+Connect your wallet, create a scoped key (**Create an MCP key** in the Connect wallet menu, or `POST /v1/keys` with the session), then register the server with your agent. For Claude Code, run these two lines (PowerShell, cmd or bash):
+
+```sh
+claude mcp remove condex
+claude mcp add condex --env CONDEX_API_KEY=cdx_... --env CONDEX_API_URL=http://localhost:8787 "--" node "/path/to/ConDex/src/mcp/server.ts"
+```
+
+The first line removes an older `condex` entry, so the same two lines also replace a key; it's fine if it reports that none was found. `"--"` is quoted because Claude's PowerShell launcher drops a bare `--`. Then restart Claude Code, or reconnect from `/mcp`. The **Create an MCP key** dialog shows these lines with your key and path filled in.
+
+The MCP tools have exactly the scopes of that key: `publish`, `read` and/or `trade`. Because data lives in memory, the key stops working when the server restarts or its data is reset; create a new one and run the two lines again.
+
+### Layout
+
+| Path | What it does |
+| --- | --- |
+| `src/api/app.ts` | HTTP routes. Request bodies are validated in `src/api/schemas.ts`. |
+| `src/services/auth.ts`, `src/near/` | Wallet sign-in: NEP-413 challenge and verification, on-chain access-key check, sessions. |
+| `src/services/accounts.ts` | Authentication and API keys scoped to `publish`, `read` and `trade`. Keys and sessions are stored hashed. |
+| `src/services/insights.ts` | Publishing versions, content hashing, minting, public previews and free reads. |
+| `src/services/orders.ts` | Fee quotes, fee reservation and order submission. |
+| `src/services/settlement.ts` | Execution events → one payout on the first fill, release on no-fill endings, idempotent replays. |
+| `src/ledger/` | `Ledger` interface and `MockLedger`. A NEAR testnet adapter replaces the mock. |
+| `src/execution/venue.ts` | `ExecutionVenue` interface and the simulated venue. |
+| `src/mcp/server.ts` | MCP server (stdio) for creators' and borrowers' agents. |
+| `public/test.html` | Test console, served at `/test` when `CONDEX_DEV_MODE=true` (the default). |
+
+### Configuration
+
+Invalid values (a misspelt network, `CONDEX_DEV_MODE=yes`, a timeout of `5m`) stop the server at startup with a message, instead of quietly falling back. Empty values mean "use the default".
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CONDEX_DEV_MODE` | `true` | `true` or `false`. Dev mode enables the test console, the dev and simulation routes, and the defaults marked *dev* below. |
+| `PORT` | `8787` | Port to listen on. |
+| `CONDEX_HOST` | dev: `127.0.0.1`, otherwise `0.0.0.0` | Network interface to listen on. |
+| `CONDEX_DB_PATH` | dev: `:memory:` | `:memory:` keeps everything in memory (lost on restart); a file path such as `data/condex.db` keeps it. **Required** outside dev mode, so data is never lost by accident. |
+| `CONDEX_EXECUTION_SECRET` | dev: `dev-execution-secret` | Shared secret the execution integration sends. **Required** outside dev mode, and the public dev value is refused there. |
+| `CONDEX_AUTH_RECIPIENT` | dev: `localhost:<port>` | The website's domain, used as the NEP-413 recipient and in the sign-in message. **Required** outside dev mode. |
+| `CONDEX_ALLOWED_ORIGINS` | dev: `http://localhost:<port>`, `http://127.0.0.1:<port>` | Comma-separated origins a redirect wallet may return to. |
+| `CONDEX_NEAR_NETWORK` | `testnet` | `testnet` or `mainnet`. |
+| `CONDEX_NEAR_RPC_URL` | FastNEAR (`https://test.rpc.fastnear.com` / `https://rpc.mainnet.fastnear.com`) | NEAR RPC used to check wallet keys, the same endpoints near-cli uses. |
+| `CONDEX_WALLET_KEY_CHECK` | dev: `none`, otherwise `near-rpc` | `near-rpc` confirms on NEAR that the signing key belongs to the account. `none` (dev mode only) skips that and pins each account to its first key. |
+| `CONDEX_CHALLENGE_TTL_SECONDS` | `300` | How long a sign-in challenge (or a near-cli command) stays valid. |
+| `CONDEX_SESSION_TTL_SECONDS` | `86400` | How long a wallet session lasts. |
+| `CONDEX_SIGNINS_PER_MINUTE` | `60` | New sign-in challenges per client address per minute. |
+| `CONDEX_TRUST_PROXY` | `0` | Number of reverse proxies in front of the server, so the client address (for sign-in limits) comes from `X-Forwarded-For`. |
+| `CONDEX_QUOTE_TTL_SECONDS` | `300` | How long a fee quote stays valid. |
+| `CONDEX_NEAR_CLI` | found automatically | Path to near-cli-rs for one-click connect (an npm or pnpm `near` shim also works). The server prints at startup whether it found it. |
+
+## Planned testnet demo
+
+- [ ] Publish a selected conversation with its conditions and expiry from an agent, and mint its thesis NFT on NEAR testnet.
+- [ ] Publish a thesis without an expiry date and show ConDex’s AI setting one, marked as set by ConDex.
+- [ ] Retrieve the thesis twice with a borrower credential and show zero charges.
+- [ ] Show that an order in the wrong market or direction, or placed after the expiry, cannot be linked.
+- [ ] Demonstrate a cancelled, unfilled order and release the reserved fee.
+- [ ] Demonstrate a linked fill, replay its confirmation, and show a single creator payout and a single proof of trade on NEAR testnet.
+- [ ] Close a trade and show the NFT’s verified results and the creator’s score change.
+- [ ] Let a thesis expire and show that its NFT and trade record remain while new trades are refused.
+- [ ] Label the source of execution evidence in the demo so viewers can distinguish a simulated fill from a live venue confirmation.
