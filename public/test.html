@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConDex Test Console</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #5d6470; --border: #dde1e7;
+    --accent: #2357d9; --accent-text: #ffffff; --pass: #13804a; --fail: #c42b2b; --warn: #a86400;
+    --code: #f0f2f5; --run: #2357d9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --panel: #171a20; --text: #e7e9ee; --muted: #9aa1ad; --border: #2a2f38;
+      --accent: #5b8cff; --accent-text: #0f1115; --pass: #3ccf7f; --fail: #ff6b6b; --warn: #f0b450;
+      --code: #1f232b; --run: #5b8cff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--panel); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 18px; margin: 0; }
+  header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; padding: 16px 20px; align-items: start; }
+  @media (max-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; } }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  section h2 { font-size: 15px; margin: 0 0 4px; }
+  section > p.hint { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: inherit; cursor: pointer; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); color: var(--text); padding: 6px 10px; display: inline-flex; align-items: center; gap: 7px; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .6; cursor: progress; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
+  .dot.running { background: var(--run); animation: pulse 0.8s infinite alternate; }
+  .dot.pass { background: var(--pass); }
+  .dot.fail { background: var(--fail); }
+  @keyframes pulse { to { opacity: .3; } }
+  .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px 12px; margin-bottom: 10px; }
+  label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  input, select, textarea { font: 13px ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; width: 100%; min-width: 0; }
+  textarea { min-height: 110px; resize: vertical; }
+  .full { grid-column: 1 / -1; }
+  aside { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 24px); }
+  @media (max-width: 1000px) { aside { position: static; max-height: none; } }
+  .state { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; align-items: center; font-size: 12px; }
+  .state input { padding: 3px 6px; font-size: 12px; }
+  .balances { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .bal { background: var(--code); border-radius: 7px; padding: 8px; }
+  .bal .k { font-size: 11px; color: var(--muted); }
+  .bal .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #log { overflow: auto; min-height: 160px; flex: 1; font: 12px ui-monospace, Consolas, monospace; }
+  #log details { border-bottom: 1px solid var(--border); padding: 4px 0; }
+  #log summary { cursor: pointer; display: flex; gap: 6px; flex-wrap: wrap; }
+  #log pre { white-space: pre-wrap; word-break: break-word; background: var(--code); padding: 6px; border-radius: 6px; margin: 4px 0; max-height: 280px; overflow: auto; }
+  .s2 { color: var(--pass); } .s4, .s5 { color: var(--fail); }
+  .note { color: var(--muted); }
+  #results table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #results td, #results th { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .pass-t { color: var(--pass); font-weight: 600; } .fail-t { color: var(--fail); font-weight: 600; }
+  .summary { font-weight: 600; margin: 6px 0; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 99px; background: var(--code); color: var(--muted); }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .panel-head h2 { margin: 0; }
+  #autorun-result { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>ConDex Test Console</h1>
+    <p>Every button calls the off-chain API and checks its own expected result. Ledger: <span id="ledger-kind" class="tag">?</span> Venue: <span id="venue-kind" class="tag">?</span></p>
+  </div>
+  <div class="buttons">
+    <button class="primary" id="run-all"><span class="dot"></span>Run every button</button>
+  </div>
+</header>
+
+<div class="layout">
+  <main id="sections"></main>
+
+  <aside>
+    <section>
+      <div class="panel-head"><h2>Balances (test NEAR)</h2><button data-inline="refresh-balances">Refresh</button></div>
+      <div class="balances">
+        <div class="bal"><div class="k">Bob available</div><div class="v" id="bal-bob-avail">–</div></div>
+        <div class="bal"><div class="k">Bob reserved</div><div class="v" id="bal-bob-res">–</div></div>
+        <div class="bal"><div class="k">Alice earned</div><div class="v" id="bal-alice-earned">–</div></div>
+      </div>
+    </section>
+    <section>
+      <h2>State</h2>
+      <p class="hint" style="margin:0 0 8px;color:var(--muted);font-size:12px">Filled in by the buttons. You can paste your own values.</p>
+      <div class="state" id="state"></div>
+    </section>
+    <section id="results" hidden>
+      <div class="panel-head"><h2>Run results</h2></div>
+      <div class="summary" id="results-summary"></div>
+      <table><thead><tr><th>Button</th><th>Result</th></tr></thead><tbody id="results-body"></tbody></table>
+    </section>
+    <section style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <div class="panel-head"><h2>Request log</h2><button data-inline="clear-log">Clear</button></div>
+      <div id="log"></div>
+    </section>
+  </aside>
+</div>
+<pre id="autorun-result"></pre>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------- state
+const STATE_FIELDS = [
+  ["aliceOwner", "Alice owner key"], ["alicePublish", "Alice publish key"],
+  ["bobOwner", "Bob owner key"], ["bobRead", "Bob read key"], ["bobTrade", "Bob trade key"],
+  ["insightId", "Insight id"], ["tokenId", "Token id"], ["quoteId", "Quote id"], ["orderId", "Order id"],
+  ["lastFillEventId", "Last fill event"], ["receiptId", "Receipt id"], ["execSecret", "Execution secret"],
+];
+const stateEl = document.getElementById("state");
+for (const [key, label] of STATE_FIELDS) {
+  const l = document.createElement("span"); l.textContent = label;
+  const i = document.createElement("input"); i.id = "st-" + key; i.spellcheck = false;
+  stateEl.append(l, i);
+}
+const S = new Proxy({}, {
+  get: (_, k) => document.getElementById("st-" + String(k))?.value.trim() || "",
+  set: (_, k, v) => { document.getElementById("st-" + String(k)).value = v ?? ""; return true; },
+});
+S.execSecret = "dev-execution-secret";
+
+// ---------------------------------------------------------------- http + log
+const logEl = document.getElementById("log");
+function log(method, path, status, body, sent) {
+  const d = document.createElement("details");
+  const s = document.createElement("summary");
+  const cls = "s" + String(status)[0];
+  s.innerHTML = `<b class="${cls}">${status}</b> <span>${method}</span> <span></span>`;
+  s.lastElementChild.textContent = path;
+  const pre = document.createElement("pre");
+  pre.textContent = (sent !== undefined ? "→ " + JSON.stringify(sent, null, 2) + "\n\n" : "") + "← " + JSON.stringify(body, null, 2);
+  d.append(s, pre);
+  logEl.prepend(d);
+}
+
+async function call(method, path, { key, body, secret } = {}) {
+  const headers = {};
+  if (key) headers.authorization = "Bearer " + key;
+  if (secret) headers["x-execution-secret"] = secret;
+  if (body !== undefined) headers["content-type"] = "application/json";
+  const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  const text = await res.text();
+  let parsed = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+  log(method, path, res.status, parsed, body);
+  return { status: res.status, body: parsed };
+}
+
+class Fail extends Error {}
+function expectStatus(res, ...codes) {
+  if (!codes.includes(res.status)) {
+    const why = res.body?.error ? `${res.body.error.code}: ${res.body.error.message}` : JSON.stringify(res.body).slice(0, 160);
+    throw new Fail(`expected HTTP ${codes.join("/")}, got ${res.status} (${why})`);
+  }
+  return res.body;
+}
+function expect(cond, msg) { if (!cond) throw new Fail(msg); }
+function need(key, hint) { const v = S[key]; if (!v) throw new Fail(`${hint} first (missing ${key})`); return v; }
+const val = (id) => document.getElementById(id).value.trim();
+
+async function refreshBalances() {
+  const [bob, alice] = await Promise.all([
+    fetch("/v1/ledger/balances/" + encodeURIComponent(val("f-bob-acct"))).then((r) => r.json()),
+    fetch("/v1/ledger/balances/" + encodeURIComponent(val("f-alice-acct"))).then((r) => r.json()),
+  ]);
+  document.getElementById("bal-bob-avail").textContent = bob.available.near;
+  document.getElementById("bal-bob-res").textContent = bob.reserved.near;
+  document.getElementById("bal-alice-earned").textContent = alice.earned.near;
+  return { bob, alice };
+}
+
+// ---------------------------------------------------------------- reusable steps
+function publishBody(titleSuffix = "") {
+  let messages;
+  try { messages = JSON.parse(val("f-messages")); } catch { throw new Fail("Messages field is not valid JSON"); }
+  const body = { title: val("f-title") + titleSuffix, fee_near: val("f-fee"), messages };
+  if (val("f-market")) body.market = val("f-market");
+  if (val("f-summary")) body.summary = val("f-summary");
+  if (val("f-expires")) body.expires_at = new Date(val("f-expires")).toISOString();
+  if (val("f-payout")) body.payout_account = val("f-payout");
+  return body;
+}
+
+async function newQuote() {
+  const b = expectStatus(await call("POST", "/v1/quotes", { key: need("bobTrade", "Issue Bob's keys"), body: { token_id: need("tokenId", "Publish an insight") } }), 201);
+  S.quoteId = b.quote_id;
+  return b;
+}
+
+async function newOrder({ quantity } = {}) {
+  await newQuote();
+  const body = { quote_id: S.quoteId, side: val("f-side"), quantity: quantity ?? val("f-qty"), authorise_fee: true };
+  if (val("f-limit")) body.limit_price = val("f-limit");
+  const b = expectStatus(await call("POST", "/v1/orders", { key: S.bobTrade, body }), 201);
+  S.orderId = b.id;
+  return b;
+}
+
+async function sim(action, body) {
+  const b = expectStatus(await call("POST", `/v1/sim/orders/${need("orderId", "Place an order")}/${action}`, { body: body ?? {} }), 201);
+  if (b.event.type === "fill") S.lastFillEventId = b.event.id;
+  if (b.receipt) S.receiptId = b.receipt.id;
+  return b;
+}
+
+async function ensureSetup() {
+  if (S.alicePublish && S.bobRead && S.bobTrade && S.tokenId) return;
+  await ACTION_BY_ID.reset.run();
+  for (const id of ["createAlice", "createBob", "aliceKeys", "bobKeys", "deposit", "publish"]) await ACTION_BY_ID[id].run();
+}
+
+async function settleTxCount() {
+  const b = expectStatus(await call("GET", "/v1/ledger/txs?limit=500"), 200);
+  return b.txs.filter((t) => t.method === "settle_fee").length;
+}
+
+// When run by "Run every button", sim buttons get a fresh open order so each has a known expected effect.
+let STRICT = false;
+async function freshOrderIfStrict() { if (STRICT) await newOrder(); }
+function expectEffect(b, effect) {
+  if (STRICT) expect(b.event.effect === effect, `expected effect "${effect}", got "${b.event.effect}"`);
+  return `effect: ${b.event.effect}; order ${b.order.status}; settlement ${b.order.settlement.status}`;
+}
+
+// ---------------------------------------------------------------- actions
+const SECTIONS = [
+  {
+    title: "1. Setup",
+    hint: "Create the two demo traders. Alice publishes; Bob reads and trades. Bob gets separate read and trade keys.",
+    fields: `
+      <label>Alice NEAR account<input id="f-alice-acct" value="alice.testnet"></label>
+      <label>Bob NEAR account<input id="f-bob-acct" value="bob.testnet"></label>
+      <label>Deposit for Bob (NEAR)<input id="f-deposit" value="1"></label>`,
+    actions: [
+      { id: "health", label: "Health check", run: async () => {
+        const b = expectStatus(await call("GET", "/health"), 200);
+        document.getElementById("ledger-kind").textContent = b.ledger;
+        document.getElementById("venue-kind").textContent = b.venue;
+        return `ledger ${b.ledger}, venue ${b.venue}`;
+      } },
+      { id: "reset", label: "Reset all data", run: async () => {
+        expectStatus(await call("POST", "/v1/dev/reset"), 200);
+        for (const [k] of STATE_FIELDS) if (k !== "execSecret") S[k] = "";
+        await refreshBalances();
+        return "database wiped";
+      } },
+      { id: "createAlice", label: "Create Alice (creator)", run: async () => {
+        const b = expectStatus(await call("POST", "/v1/accounts", { body: { near_account_id: val("f-alice-acct"), display_name: "Alice" } }), 201);
+        S.aliceOwner = b.owner_key.secret;
+        return `account ${b.account.id}`;
+      } },
+      { id: "createBob", label: "Create Bob (borrower)", run: async () => {
+        const b = expectStatus(await call("POST", "/v1/accounts", { body: { near_account_id: val("f-bob-acct"), display_name: "Bob" } }), 201);
+        S.bobOwner = b.owner_key.secret;
+        return `account ${b.account.id}`;
+      } },
+      { id: "aliceKeys", label: "Issue Alice's publish key", run: async () => {
+        const b = expectStatus(await call("POST", "/v1/keys", { key: need("aliceOwner", "Create Alice"), body: { scopes: ["publish"], label: "Alice's agent" } }), 201);
+        S.alicePublish = b.secret;
+        return `scopes ${b.scopes.join(",")}`;
+      } },
+      { id: "bobKeys", label: "Issue Bob's read + trade keys", run: async () => {
+        const owner = need("bobOwner", "Create Bob");
+        S.bobRead = expectStatus(await call("POST", "/v1/keys", { key: owner, body: { scopes: ["read"], label: "Bob research agent" } }), 201).secret;
+        S.bobTrade = expectStatus(await call("POST", "/v1/keys", { key: owner, body: { scopes: ["trade"], label: "Bob trading agent" } }), 201).secret;
+        return "read key and trade key issued";
+      } },
+      { id: "whoami", label: "Who am I (Bob read key)", run: async () => {
+        const b = expectStatus(await call("GET", "/v1/me", { key: need("bobRead", "Issue Bob's keys") }), 200);
+        expect(b.key.scopes.join() === "read", "read key should only have the read scope");
+        return `${b.account.near_account_id}, scopes ${b.key.scopes}`;
+      } },
+      { id: "listKeys", label: "List Bob's keys", run: async () => {
+        const b = expectStatus(await call("GET", "/v1/keys", { key: need("bobOwner", "Create Bob") }), 200);
+        return `${b.keys.length} keys`;
+      } },
+      { id: "deposit", label: "Deposit test NEAR for Bob", run: async () => {
+        const b = expectStatus(await call("POST", "/v1/ledger/deposit", { key: need("bobOwner", "Create Bob"), body: { amount_near: val("f-deposit") } }), 201);
+        return `Bob available ${b.available.near} NEAR`;
+      } },
+    ],
+  },
+  {
+    title: "2. Publish (creator's agent)",
+    hint: "Alice's agent uploads only the messages she approved. Each version is hashed and minted as its own token.",
+    fields: `
+      <label>Title<input id="f-title" value="ETH failed breakout"></label>
+      <label>Market<input id="f-market" value="ETH-USD"></label>
+      <label>Fee per filled order (NEAR)<input id="f-fee" value="0.1"></label>
+      <label>Payout account (optional)<input id="f-payout" placeholder="defaults to Alice"></label>
+      <label>Expires (optional)<input id="f-expires" type="datetime-local"></label>
+      <label class="full">Public summary<input id="f-summary" value="Fade a failed sweep of yesterday's UTC high."></label>
+      <label class="full">Approved messages (JSON)<textarea id="f-messages">[
+  {"role": "user", "content": "ETH swept yesterday's high. Is the breakout real?"},
+  {"role": "assistant", "content": "Treat it as failed if a 15-minute candle closes back below yesterday's UTC high. Short on that close. Invalidation: a 1-hour close above the sweep high. Walk away if neither happens by the US open."}
+]</textarea></label>`,
+    actions: [
+      { id: "publish", label: "Publish insight + mint token", run: async () => {
+        const b = expectStatus(await call("POST", "/v1/insights", { key: need("alicePublish", "Issue Alice's publish key"), body: publishBody() }), 201);
+        S.insightId = b.insight_id; S.tokenId = b.token_id;
+        expect(b.read_fee.yocto === "0", "reading must be free");
+        return `token ${b.token_id}, mint ${b.mint.tx} (${b.mint.ledger})`;
+      } },
+      { id: "publishVersion", label: "Publish new version", run: async () => {
+        const b = expectStatus(await call("POST", `/v1/insights/${need("insightId", "Publish an insight")}/versions`, { key: need("alicePublish", "Issue Alice's publish key"), body: publishBody(" (v2)") }), 201);
+        S.tokenId = b.token_id;
+        return `version ${b.version} → token ${b.token_id}`;
+      } },
+      { id: "publishWithReadKey", label: "Publish with Bob's read key (expect 403)", run: async () => {
+        const b = expectStatus(await call("POST", "/v1/insights", { key: need("bobRead", "Issue Bob's keys"), body: publishBody() }), 403);
+        return b.error.code;
+      } },
+    ],
+  },
+  {
+    title: "3. Browse and read (borrower's agent)",
+    hint: "Previews are public. The full conversation needs a read key and is always free.",
+    actions: [
+      { id: "listTokens", label: "List tokens (public)", run: async () => {
+        const b = expectStatus(await call("GET", "/v1/tokens"), 200);
+        return `${b.tokens.length} tokens`;
+      } },
+      { id: "preview", label: "Preview token (public)", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}/preview`), 200);
+        expect(b.messages === undefined, "preview must not include the messages");
+        return `${b.message_count} messages hidden, fee ${b.fee_per_filled_order.near} NEAR per filled order`;
+      } },
+      { id: "read", label: "Read insight (Bob)", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
+        expect(b.charge.yocto === "0", "reading must cost nothing");
+        return `${b.messages.length} messages, charged ${b.charge.near} NEAR`;
+      } },
+      { id: "readAgain", label: "Read again (still free)", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
+        expect(b.your_reads.total_charged.yocto === "0", "repeated reads must cost nothing");
+        return `${b.your_reads.count} reads, total charged ${b.your_reads.total_charged.near} NEAR`;
+      } },
+      { id: "readWithTradeKey", label: "Read with trade key (expect 403)", run: async () => {
+        return expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobTrade", "Issue Bob's keys") }), 403).error.code;
+      } },
+      { id: "readNoKey", label: "Read without a key (expect 401)", run: async () => {
+        return expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`), 401).error.code;
+      } },
+    ],
+  },
+  {
+    title: "4. Linked trade",
+    hint: "Bob quotes the fee, then authorises reserving it. The order is submitted to the venue only after the reserve.",
+    fields: `
+      <label>Side<select id="f-side"><option>sell</option><option>buy</option></select></label>
+      <label>Quantity<input id="f-qty" value="2"></label>
+      <label>Limit price (optional)<input id="f-limit" placeholder="market"></label>`,
+    actions: [
+      { id: "quote", label: "Get fee quote", run: async () => {
+        const b = await newQuote();
+        return `fee ${b.fee.near} NEAR, valid until ${new Date(b.expires_at).toLocaleTimeString()}`;
+      } },
+      { id: "quoteWithReadKey", label: "Quote with read key (expect 403)", run: async () => {
+        return expectStatus(await call("POST", "/v1/quotes", { key: need("bobRead", "Issue Bob's keys"), body: { token_id: need("tokenId", "Publish an insight") } }), 403).error.code;
+      } },
+      { id: "quoteSelfLink", label: "Alice quotes her own insight (expect 403)", run: async () => {
+        return expectStatus(await call("POST", "/v1/quotes", { key: need("aliceOwner", "Create Alice"), body: { token_id: need("tokenId", "Publish an insight") } }), 403).error.code;
+      } },
+      { id: "placeOrder", label: "Authorise fee + place order", run: async () => {
+        const b = await newOrder();
+        expect(b.settlement.reserve?.status === "reserved", "fee should be reserved");
+        return `order ${b.id} ${b.status}, fee ${b.fee.near} NEAR reserved`;
+      } },
+      { id: "placeWithoutAuth", label: "Place order without authorising fee (expect 400)", run: async () => {
+        await newQuote();
+        const b = expectStatus(await call("POST", "/v1/orders", { key: S.bobTrade, body: { quote_id: S.quoteId, side: val("f-side"), quantity: val("f-qty"), authorise_fee: false } }), 400);
+        return b.error.code;
+      } },
+      { id: "getOrder", label: "Get order", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/orders/${need("orderId", "Place an order")}`, { key: need("bobTrade", "Issue Bob's keys") }), 200);
+        return `${b.status}, filled ${b.filled_quantity}/${b.quantity}, settlement ${b.settlement.status}`;
+      } },
+      { id: "listOrders", label: "List Bob's orders", run: async () => {
+        const b = expectStatus(await call("GET", "/v1/orders", { key: need("bobTrade", "Issue Bob's keys") }), 200);
+        return `${b.orders.length} orders`;
+      } },
+    ],
+  },
+  {
+    title: "5. Simulated venue (execution evidence)",
+    hint: "Drives the current order. The first fill pays Alice once; nothing else pays again. Evidence is labelled \"simulated\".",
+    fields: `
+      <label>Fill quantity<input id="f-fill-qty" value="0.5"></label>
+      <label>Fill price<input id="f-fill-price" value="3500"></label>`,
+    actions: [
+      { id: "simFill", label: "Partial fill", run: async () => {
+        const b = await sim("fill", { quantity: val("f-fill-qty"), price: val("f-fill-price") });
+        return expectEffect(b, "settled");
+      } },
+      { id: "simReplay", label: "Replay last fill confirmation", run: async () => {
+        const b = expectStatus(await call("POST", `/v1/sim/events/${need("lastFillEventId", "Send a fill")}/replay`), 200);
+        expect(b.replayed === true, "replay must be recognised as a replay");
+        return `replayed, receipt ${b.receipt?.id ?? "none"} (no new payout)`;
+      } },
+      { id: "simFillRest", label: "Fill the rest", run: async () => {
+        const b = await sim("fill");
+        return expectEffect(b, "fill_same_receipt");
+      } },
+      { id: "simCancel", label: "Cancel", run: async () => {
+        await freshOrderIfStrict();
+        return expectEffect(await sim("cancel"), "released");
+      } },
+      { id: "simReject", label: "Reject", run: async () => {
+        await freshOrderIfStrict();
+        return expectEffect(await sim("reject"), "released");
+      } },
+      { id: "simExpire", label: "Expire", run: async () => {
+        await freshOrderIfStrict();
+        return expectEffect(await sim("expire"), "released");
+      } },
+      { id: "simUnknown", label: "Venue status unknown", run: async () => {
+        await freshOrderIfStrict();
+        return expectEffect(await sim("unknown"), "settlement_pending");
+      } },
+      { id: "execLive", label: "Send live-venue fill (execution endpoint)", run: async () => {
+        await freshOrderIfStrict();
+        const body = { event_id: "evt_" + Math.random().toString(36).slice(2, 10), order_id: need("orderId", "Place an order"), type: "fill", quantity: val("f-fill-qty"), price: val("f-fill-price"), source: "venue:demo" };
+        const b = expectStatus(await call("POST", "/v1/execution/events", { secret: S.execSecret, body }), 201);
+        S.lastFillEventId = b.event.id;
+        if (b.receipt) S.receiptId = b.receipt.id;
+        return expectEffect(b, "settled") + (b.receipt ? ` — ${b.receipt.evidence_label}` : "");
+      } },
+      { id: "execReplay", label: "Replay via execution endpoint", run: async () => {
+        const b = expectStatus(await call("POST", `/v1/execution/events/${need("lastFillEventId", "Send a fill")}/replay`, { secret: S.execSecret }), 200);
+        expect(b.replayed === true, "replay must be recognised as a replay");
+        return "replayed, no new payout";
+      } },
+      { id: "execNoSecret", label: "Execution event without secret (expect 401)", run: async () => {
+        return expectStatus(await call("POST", "/v1/execution/events", { body: { event_id: "x", order_id: S.orderId || "x", type: "fill", quantity: "1", source: "venue:demo" } }), 401).error.code;
+      } },
+    ],
+  },
+  {
+    title: "6. Ledger and receipts",
+    hint: "The mock ledger stands in for the NEAR contract until it is deployed. Every call writes a pseudo-transaction.",
+    actions: [
+      { id: "bobBalance", label: "Bob's balance", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/ledger/balances/${val("f-bob-acct")}`), 200);
+        return `available ${b.available.near}, reserved ${b.reserved.near}`;
+      } },
+      { id: "aliceBalance", label: "Alice's earnings", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/ledger/balances/${val("f-alice-acct")}`), 200);
+        return `earned ${b.earned.near} NEAR`;
+      } },
+      { id: "ledgerTxs", label: "Ledger transactions", run: async () => {
+        const b = expectStatus(await call("GET", "/v1/ledger/txs"), 200);
+        const counts = {};
+        for (const t of b.txs) counts[t.method] = (counts[t.method] ?? 0) + 1;
+        return Object.entries(counts).map(([k, v]) => `${k} ×${v}`).join(", ") || "none";
+      } },
+      { id: "receiptsBob", label: "Bob's receipts", run: async () => {
+        return `${expectStatus(await call("GET", "/v1/receipts", { key: need("bobTrade", "Issue Bob's keys") }), 200).receipts.length} receipts`;
+      } },
+      { id: "receiptsAlice", label: "Alice's receipts", run: async () => {
+        return `${expectStatus(await call("GET", "/v1/receipts", { key: need("aliceOwner", "Create Alice") }), 200).receipts.length} receipts`;
+      } },
+      { id: "getReceipt", label: "Get last receipt", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/receipts/${need("receiptId", "Fill an order")}`), 200);
+        return `${b.fee.near} NEAR to ${b.payout_account} — ${b.evidence_label}`;
+      } },
+    ],
+  },
+  {
+    title: "7. Key management",
+    actions: [
+      { id: "revokeKey", label: "Issue + revoke a temporary key", run: async () => {
+        const owner = need("bobOwner", "Create Bob");
+        const k = expectStatus(await call("POST", "/v1/keys", { key: owner, body: { scopes: ["read"], label: "temporary" } }), 201);
+        expectStatus(await call("GET", "/v1/me", { key: k.secret }), 200);
+        expectStatus(await call("DELETE", `/v1/keys/${k.id}`, { key: owner }), 200);
+        expectStatus(await call("GET", "/v1/me", { key: k.secret }), 401);
+        return "key worked, then returned 401 after revocation";
+      } },
+    ],
+  },
+  {
+    title: "8. README demo checklist",
+    hint: "One click per checklist item. Each sets up what it needs and checks balances before and after.",
+    actions: [
+      { id: "demo1", label: "① Publish + mint token", run: async () => {
+        await ensureSetup();
+        const b = expectStatus(await call("POST", "/v1/insights", { key: S.alicePublish, body: publishBody(" (demo)") }), 201);
+        S.insightId = b.insight_id; S.tokenId = b.token_id;
+        const txs = expectStatus(await call("GET", "/v1/ledger/txs"), 200).txs;
+        expect(txs.some((t) => t.method === "mint_insight_token" && t.args.token_id === b.token_id), "mint tx not found on ledger");
+        return `minted ${b.token_id} with hash ${b.content_hash.slice(0, 12)}…`;
+      } },
+      { id: "demo2", label: "② Read twice, zero charges", run: async () => {
+        await ensureSetup();
+        const before = (await refreshBalances()).bob;
+        for (let i = 0; i < 2; i++) {
+          const r = expectStatus(await call("GET", `/v1/tokens/${S.tokenId}`, { key: S.bobRead }), 200);
+          expect(r.charge.yocto === "0", "read was charged");
+        }
+        const after = (await refreshBalances()).bob;
+        expect(JSON.stringify(before) === JSON.stringify(after), "Bob's balance changed after reading");
+        return "2 reads, Bob's balance unchanged";
+      } },
+      { id: "demo3", label: "③ Cancelled unfilled order releases fee", run: async () => {
+        await ensureSetup();
+        const before = (await refreshBalances()).bob;
+        await newOrder({ quantity: "1" });
+        const mid = (await refreshBalances()).bob;
+        expect(BigInt(mid.reserved.yocto) > BigInt(before.reserved.yocto), "fee was not reserved");
+        const c = await sim("cancel");
+        expect(c.event.effect === "released", `expected released, got ${c.event.effect}`);
+        const after = (await refreshBalances()).bob;
+        expect(after.available.yocto === before.available.yocto, "Bob did not get the fee back");
+        return `reserved ${c.order.fee.near}, then released; Bob back to ${after.available.near}`;
+      } },
+      { id: "demo4", label: "④ Fill, replay, single payout", run: async () => {
+        await ensureSetup();
+        const before = (await refreshBalances()).alice;
+        const settlesBefore = await settleTxCount();
+        const order = await newOrder({ quantity: "2" });
+        const f1 = await sim("fill", { quantity: "0.5", price: "3500" });
+        expect(f1.event.effect === "settled", "first fill should settle");
+        const rp = expectStatus(await call("POST", `/v1/sim/events/${f1.event.id}/replay`), 200);
+        expect(rp.replayed && rp.receipt.id === f1.receipt.id, "replay should return the same receipt");
+        const f2 = await sim("fill", { quantity: "0.5" });
+        expect(f2.event.effect === "fill_same_receipt", "second fill should not pay again");
+        const after = (await refreshBalances()).alice;
+        const paid = BigInt(after.earned.yocto) - BigInt(before.earned.yocto);
+        expect(paid === BigInt(order.fee.yocto), `Alice should earn exactly one fee, earned ${paid} yocto`);
+        expect((await settleTxCount()) - settlesBefore === 1, "expected exactly one settle_fee tx");
+        return `Alice earned ${order.fee.near} NEAR once; receipt ${f1.receipt.id}`;
+      } },
+      { id: "demo5", label: "⑤ Evidence labels", run: async () => {
+        await ensureSetup();
+        await newOrder({ quantity: "1" });
+        const simFill = await sim("fill");
+        expect(simFill.receipt.evidence_source === "simulated", "simulated fill not labelled");
+        await newOrder({ quantity: "1" });
+        const live = expectStatus(await call("POST", "/v1/execution/events", { secret: S.execSecret, body: { event_id: "evt_" + Date.now(), order_id: S.orderId, type: "fill", quantity: "1", source: "venue:demo" } }), 201);
+        expect(live.receipt.evidence_source === "venue:demo", "live fill not labelled");
+        return `"${simFill.receipt.evidence_label}" vs "${live.receipt.evidence_label}"`;
+      } },
+    ],
+  },
+];
+
+// ---------------------------------------------------------------- render + wiring
+const ACTION_BY_ID = {};
+const pending = new WeakMap(); // button -> promise of its latest run
+const main = document.getElementById("sections");
+
+for (const sec of SECTIONS) {
+  const el = document.createElement("section");
+  el.innerHTML = `<h2></h2>${sec.hint ? '<p class="hint"></p>' : ""}${sec.fields ? `<div class="fields">${sec.fields}</div>` : ""}<div class="buttons"></div>`;
+  el.querySelector("h2").textContent = sec.title;
+  if (sec.hint) el.querySelector(".hint").textContent = sec.hint;
+  const row = el.querySelector(".buttons");
+  for (const a of sec.actions) {
+    ACTION_BY_ID[a.id] = a;
+    const btn = document.createElement("button");
+    btn.dataset.action = a.id;
+    btn.innerHTML = '<span class="dot"></span><span></span>';
+    btn.lastElementChild.textContent = a.label;
+    btn.addEventListener("click", () => pending.set(btn, runButton(btn, a)));
+    row.append(btn);
+  }
+  main.append(el);
+}
+
+async function runButton(btn, action) {
+  const dot = btn.querySelector(".dot");
+  dot.className = "dot running";
+  btn.disabled = true;
+  try {
+    const note = await action.run();
+    dot.className = "dot pass";
+    btn.title = "PASS: " + (note ?? "");
+    refreshBalances().catch(() => {});
+    return { ok: true, note: note ?? "" };
+  } catch (err) {
+    dot.className = "dot fail";
+    btn.title = "FAIL: " + err.message;
+    log("ERR", action.label, "!", { error: err.message });
+    return { ok: false, note: err.message };
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.querySelector('[data-inline="refresh-balances"]').addEventListener("click", () => refreshBalances().catch(() => {}));
+document.querySelector('[data-inline="clear-log"]').addEventListener("click", () => { logEl.innerHTML = ""; });
+
+// "Run every button": resets, then clicks every action button top to bottom and records each result.
+async function runAll() {
+  const runBtn = document.getElementById("run-all");
+  const dot = runBtn.querySelector(".dot");
+  runBtn.disabled = true; dot.className = "dot running";
+  const tbody = document.getElementById("results-body");
+  tbody.innerHTML = "";
+  document.getElementById("results").hidden = false;
+  const results = [];
+  STRICT = true;
+  try {
+    for (const btn of document.querySelectorAll("button[data-action]")) {
+      btn.click();
+      const r = await pending.get(btn);
+      const label = ACTION_BY_ID[btn.dataset.action].label;
+      results.push({ id: btn.dataset.action, label, ...r });
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td></td><td><span class="${r.ok ? "pass-t" : "fail-t"}">${r.ok ? "PASS" : "FAIL"}</span> <span class="note"></span></td>`;
+      tr.firstElementChild.textContent = label;
+      tr.querySelector(".note").textContent = r.note;
+      tbody.append(tr);
+    }
+  } finally {
+    STRICT = false;
+  }
+  const failed = results.filter((r) => !r.ok);
+  const summary = `${results.length - failed.length}/${results.length} buttons passed`;
+  document.getElementById("results-summary").textContent = summary;
+  document.getElementById("results-summary").className = "summary " + (failed.length ? "fail-t" : "pass-t");
+  dot.className = "dot " + (failed.length ? "fail" : "pass");
+  runBtn.disabled = false;
+  const out = { total: results.length, passed: results.length - failed.length, failed: failed.length, results };
+  document.getElementById("autorun-result").textContent = JSON.stringify(out);
+  document.body.dataset.autorun = "done";
+  return out;
+}
+document.getElementById("run-all").addEventListener("click", () => runAll());
+
+ACTION_BY_ID.health.run().catch(() => {});
+refreshBalances().catch(() => {});
+if (new URLSearchParams(location.search).has("autorun")) runAll();
+</script>
+</body>
+</html>

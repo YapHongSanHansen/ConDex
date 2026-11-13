@@ -1,0 +1,195 @@
+import type { Ctx } from "../context.ts";
+import { transaction } from "../db.ts";
+import { badRequest, conflict, forbidden, notFound } from "../errors.ts";
+import { formatDecimal, parseDecimal } from "../quantity.ts";
+import { amount, newId, nowIso } from "../util.ts";
+import { type Principal, getAccount, requireScope } from "./accounts.ts";
+import { getVersion, isExpired } from "./insights.ts";
+import { ingestEvent } from "./settlement.ts";
+
+export type OrderStatus = "submitted" | "open" | "partially_filled" | "filled" | "cancelled" | "rejected" | "expired";
+export type SettlementStatus = "pending" | "settled" | "released";
+
+export interface OrderRow {
+  id: string; borrower_id: string; key_id: string; token_id: string; quote_id: string; market: string;
+  side: "buy" | "sell"; quantity: string; limit_price: string | null; fee_yocto: string; venue: string;
+  venue_order_id: string | null; status: OrderStatus; venue_status_known: number; filled_quantity: string;
+  settlement_status: SettlementStatus; receipt_id: string | null; created_at: string; updated_at: string;
+}
+
+interface QuoteRow {
+  id: string; token_id: string; borrower_id: string; fee_yocto: string; expires_at: string;
+  order_id: string | null; created_at: string;
+}
+
+export const TERMINAL_STATUSES: OrderStatus[] = ["filled", "cancelled", "rejected", "expired"];
+
+/** Step 1 of a linked trade: fix the fee for this insight version so the borrower can see it before authorising. */
+export function createQuote(ctx: Ctx, principal: Principal, tokenId: string) {
+  requireScope(principal, "trade");
+  const version = getVersion(ctx, tokenId);
+  assertNotSelfLink(ctx, principal, version.creator_id, version.payout_account);
+  if (isExpired(version)) throw conflict("insight_expired", `Insight ${tokenId} expired at ${version.expires_at}`);
+  const quote: QuoteRow = {
+    id: newId("quote"),
+    token_id: tokenId,
+    borrower_id: principal.account.id,
+    fee_yocto: version.fee_yocto,
+    expires_at: new Date(Date.now() + ctx.config.quoteTtlSeconds * 1000).toISOString(),
+    order_id: null,
+    created_at: nowIso(),
+  };
+  ctx.db.prepare("INSERT INTO quotes (id, token_id, borrower_id, fee_yocto, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(quote.id, quote.token_id, quote.borrower_id, quote.fee_yocto, quote.expires_at, quote.created_at);
+  return {
+    quote_id: quote.id,
+    token_id: tokenId,
+    fee: amount(quote.fee_yocto),
+    fee_rule: "Charged once, on this order's first confirmed fill. Released if the order ends with no fills.",
+    payout_account: version.payout_account,
+    content_hash: version.content_hash,
+    expires_at: quote.expires_at,
+  };
+}
+
+export interface PlaceOrderInput {
+  quoteId: string;
+  side: "buy" | "sell";
+  quantity: string;
+  market?: string | null;
+  limitPrice?: string | null;
+  /** Must be true: the borrower explicitly authorises reserving the quoted fee. */
+  authoriseFee: boolean;
+}
+
+/** Step 2: reserve the quoted fee on the ledger, then submit the order to the execution venue. */
+export function placeOrder(ctx: Ctx, principal: Principal, input: PlaceOrderInput) {
+  requireScope(principal, "trade");
+  if (input.authoriseFee !== true) {
+    throw badRequest("fee_not_authorised", "Set authorise_fee to true to reserve the quoted fee for this order");
+  }
+  const quantity = parseDecimal(input.quantity, "quantity", { positive: true });
+  const limitPrice = input.limitPrice != null ? formatDecimal(parseDecimal(input.limitPrice, "limit_price", { positive: true })) : null;
+
+  const order = transaction(ctx.db, () => {
+    const quote = ctx.db.prepare("SELECT * FROM quotes WHERE id = ?").get(input.quoteId) as QuoteRow | undefined;
+    if (!quote || quote.borrower_id !== principal.account.id) throw notFound("Quote");
+    if (quote.order_id) throw conflict("quote_used", `Quote ${quote.id} was already used by order ${quote.order_id}`);
+    if (quote.expires_at <= nowIso()) throw conflict("quote_expired", "This quote has expired. Request a new one.");
+
+    const version = getVersion(ctx, quote.token_id);
+    if (isExpired(version)) throw conflict("insight_expired", `Insight ${version.token_id} has expired`);
+    const market = input.market ?? version.market;
+    if (!market) throw badRequest("market_required", "This insight has no market, so the order must name one");
+
+    const now = nowIso();
+    const row: OrderRow = {
+      id: newId("ord"),
+      borrower_id: principal.account.id,
+      key_id: principal.keyId,
+      token_id: version.token_id,
+      quote_id: quote.id,
+      market,
+      side: input.side,
+      quantity: formatDecimal(quantity),
+      limit_price: limitPrice,
+      fee_yocto: quote.fee_yocto,
+      venue: ctx.venue.name,
+      venue_order_id: null,
+      status: "submitted",
+      venue_status_known: 1,
+      filled_quantity: "0",
+      settlement_status: "pending",
+      receipt_id: null,
+      created_at: now,
+      updated_at: now,
+    };
+    ctx.db.prepare(
+      `INSERT INTO orders (id, borrower_id, key_id, token_id, quote_id, market, side, quantity, limit_price, fee_yocto,
+         venue, status, filled_quantity, settlement_status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      row.id, row.borrower_id, row.key_id, row.token_id, row.quote_id, row.market, row.side, row.quantity,
+      row.limit_price, row.fee_yocto, row.venue, row.status, row.filled_quantity, row.settlement_status,
+      row.created_at, row.updated_at,
+    );
+    ctx.ledger.reserveFee({
+      orderId: row.id,
+      tokenId: row.token_id,
+      payer: principal.account.near_account_id,
+      payee: version.payout_account,
+      amountYocto: BigInt(row.fee_yocto),
+    });
+    ctx.db.prepare("UPDATE quotes SET order_id = ? WHERE id = ?").run(row.id, quote.id);
+    return row;
+  });
+
+  // Submit after the reserve is committed. The venue's answer arrives as an execution event.
+  const submitted = ctx.venue.submit({
+    orderId: order.id, market: order.market, side: order.side, quantity: order.quantity, limitPrice: order.limit_price,
+  });
+  ctx.db.prepare("UPDATE orders SET venue_order_id = ?, updated_at = ? WHERE id = ?").run(submitted.venueOrderId, nowIso(), order.id);
+  ingestEvent(ctx, {
+    eventId: newId(ctx.venue.name === "simulated" ? "simevt" : "evt"),
+    orderId: order.id,
+    type: submitted.accepted ? "accepted" : "rejected",
+    source: ctx.venue.name,
+  });
+  return getOrder(ctx, principal, order.id);
+}
+
+export function getOrder(ctx: Ctx, principal: Principal, orderId: string) {
+  const row = loadOrder(ctx, orderId);
+  if (row.borrower_id !== principal.account.id) throw notFound("Order");
+  return orderView(ctx, row);
+}
+
+export function listOrders(ctx: Ctx, principal: Principal) {
+  const rows = ctx.db.prepare("SELECT * FROM orders WHERE borrower_id = ? ORDER BY created_at DESC").all(principal.account.id) as unknown as OrderRow[];
+  return rows.map((r) => orderView(ctx, r));
+}
+
+export function loadOrder(ctx: Ctx, orderId: string): OrderRow {
+  const row = ctx.db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId) as OrderRow | undefined;
+  if (!row) throw notFound("Order");
+  return row;
+}
+
+export function orderView(ctx: Ctx, r: OrderRow) {
+  const reserve = ctx.ledger.getReserve(r.id);
+  const events = ctx.db.prepare(
+    "SELECT id, type, quantity, price, source, effect, receipt_id, received_at FROM execution_events WHERE order_id = ? ORDER BY received_at, rowid",
+  ).all(r.id);
+  return {
+    id: r.id,
+    token_id: r.token_id,
+    quote_id: r.quote_id,
+    market: r.market,
+    side: r.side,
+    quantity: r.quantity,
+    limit_price: r.limit_price,
+    filled_quantity: r.filled_quantity,
+    status: r.status,
+    venue: { name: r.venue, order_id: r.venue_order_id, status_known: r.venue_status_known === 1 },
+    fee: amount(r.fee_yocto),
+    settlement: {
+      status: r.settlement_status,
+      receipt_id: r.receipt_id,
+      ledger: ctx.ledger.kind,
+      reserve: reserve
+        ? { status: reserve.status, payer: reserve.payer, payee: reserve.payee, reserve_tx: reserve.reserveTx, final_tx: reserve.finalTx }
+        : null,
+    },
+    execution_events: events,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  };
+}
+
+/** The creator earns from other traders' orders, so an order may not link to the borrower's own insight. */
+function assertNotSelfLink(ctx: Ctx, principal: Principal, creatorId: string, payoutAccount: string) {
+  const creator = getAccount(ctx, creatorId);
+  if (creatorId === principal.account.id || payoutAccount === principal.account.near_account_id || creator.near_account_id === principal.account.near_account_id) {
+    throw forbidden("self_link", "An order cannot be linked to your own insight");
+  }
+}
