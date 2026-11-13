@@ -36,6 +36,17 @@ export interface Config {
   signInsPerMinute: number;
   /** Number of reverse proxies in front of the server, so client addresses come from X-Forwarded-For. */
   trustProxyHops: number;
+  /** The reasoning model that sets a thesis's expiry when the creator gives none. null when no key is set. */
+  llm: LlmConfig | null;
+}
+
+/** An OpenAI-compatible chat completions endpoint. */
+export interface LlmConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  reasoningEffort: "low" | "medium" | "high";
+  timeoutMs: number;
 }
 
 const DEV_EXECUTION_SECRET = "dev-execution-secret";
@@ -90,6 +101,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionTtlSeconds: parseInteger(env, "CONDEX_SESSION_TTL_SECONDS", 60 * 60 * 24),
     signInsPerMinute: parseInteger(env, "CONDEX_SIGNINS_PER_MINUTE", 60),
     trustProxyHops: parseInteger(env, "CONDEX_TRUST_PROXY", 0, 0),
+    llm: loadLlm(env),
+  };
+}
+
+function loadLlm(env: NodeJS.ProcessEnv): LlmConfig | null {
+  const apiKey = env.CONDEX_LLM_API_KEY?.trim();
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    baseUrl: (env.CONDEX_LLM_BASE_URL?.trim() || "https://llm.grafilab.ai/v1").replace(/\/+$/, ""),
+    model: env.CONDEX_LLM_MODEL?.trim() || "qwen/qwen3.7-flash",
+    reasoningEffort: parseChoice(env, "CONDEX_LLM_REASONING_EFFORT", ["low", "medium", "high"] as const, "low"),
+    timeoutMs: parseInteger(env, "CONDEX_LLM_TIMEOUT_SECONDS", 60) * 1000,
   };
 }
 

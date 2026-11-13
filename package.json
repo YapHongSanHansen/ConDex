@@ -8,8 +8,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning src/main.ts",
-    "dev": "node --disable-warning=ExperimentalWarning --watch src/main.ts",
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env src/main.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env --watch src/main.ts",
     "mcp": "node --disable-warning=ExperimentalWarning src/mcp/server.ts",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts",
     "test:page": "node --disable-warning=ExperimentalWarning scripts/check-test-page.ts",

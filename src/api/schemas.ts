@@ -48,7 +48,10 @@ export const publishBody = z.object({
   market: z.string().min(1).max(64).nullable().optional(),
   summary: z.string().max(1000).nullable().optional(),
   conditions: conditionsSchema.nullable().optional(),
+  /** The creator's expiry. Pass expiry_date (and optionally expiry_time), or a full ISO expires_at; omit all to let ConDex's AI set it. */
   expires_at: z.string().nullable().optional(),
+  expiry_date: z.string().max(10).nullable().optional(),
+  expiry_time: z.string().max(5).nullable().optional(),
   fee_near: nearAmount,
   payout_account: z.string().nullable().optional(),
   messages: z.array(messageSchema).min(1).max(200),

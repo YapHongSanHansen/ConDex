@@ -2,6 +2,7 @@ import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
 import { badRequest, forbidden, notFound } from "../errors.ts";
 import { amount, canonicalJson, newId, nowIso, parseNear, sha256Hex } from "../util.ts";
+import type { ResolvedExpiry } from "./expiry.ts";
 import { type AccountRow, type Principal, accountView, assertNearAccountId, getAccount, requireScope } from "./accounts.ts";
 
 export interface Message {
@@ -25,7 +26,8 @@ export interface PublishInput {
   market?: string | null;
   summary?: string | null;
   conditions?: Conditions | null;
-  expiresAt?: string | null;
+  /** Already resolved by `resolveExpiry`: the creator's own, or the one ConDex's AI set. */
+  expiry: ResolvedExpiry;
   feeNear: string;
   payoutAccount?: string | null;
   messages: Message[];
@@ -34,7 +36,7 @@ export interface PublishInput {
 export interface VersionRow {
   token_id: string; insight_id: string; version: number; creator_id: string; payout_account: string;
   fee_yocto: string; title: string; market: string | null; summary: string | null; expires_at: string | null;
-  conditions: string | null; messages: string; content_hash: string; mint_tx: string; created_at: string;
+  expiry_source: "creator" | "ai" | null; expiry_reason: string | null; conditions: string | null; messages: string; content_hash: string; mint_tx: string; created_at: string;
 }
 
 /** Publishes a new insight. Its first version is minted as a token. */
@@ -152,6 +154,8 @@ function contentOf(r: VersionRow) {
     summary: r.summary,
     conditions: conditionsOf(r),
     expires_at: r.expires_at,
+    expiry_source: r.expiry_source,
+    expiry_reason: r.expiry_reason,
     messages: JSON.parse(r.messages) as Message[],
   };
 }
@@ -191,6 +195,7 @@ export function thesisProof(ctx: Ctx, tokenId: string) {
       creator,
       published_at: row.created_at,
       expires_at: row.expires_at,
+      expiry: { set_by: row.expiry_source, reason: row.expiry_reason },
       content_hash: row.content_hash,
       /** True while the stored conditions and conversation still hash to the minted fingerprint. */
       preserved: integrity(row).matches,
@@ -230,7 +235,9 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
     market: input.market ?? null,
     summary: input.summary ?? null,
     conditions: input.conditions ?? null,
-    expires_at: input.expiresAt ?? null,
+    expires_at: input.expiry.expiresAt,
+    expiry_source: input.expiry.source,
+    expiry_reason: input.expiry.reason,
     messages: input.messages,
   };
   const contentHash = sha256Hex(canonicalJson(content));
@@ -244,23 +251,17 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
   const createdAt = nowIso();
   ctx.db.prepare(
     `INSERT INTO insight_versions (token_id, insight_id, version, creator_id, payout_account, fee_yocto, title, market,
-       summary, expires_at, conditions, messages, content_hash, mint_tx, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       summary, expires_at, expiry_source, expiry_reason, conditions, messages, content_hash, mint_tx, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     tokenId, insightId, version, principal.account.id, payoutAccount, feeYocto.toString(), input.title,
     content.market, content.summary, content.expires_at,
-    content.conditions ? JSON.stringify(content.conditions) : null, JSON.stringify(input.messages), contentHash, tx, createdAt,
+    content.expiry_source, content.expiry_reason, content.conditions ? JSON.stringify(content.conditions) : null, JSON.stringify(input.messages), contentHash, tx, createdAt,
   );
   return previewView(ctx, getVersion(ctx, tokenId));
 }
 
 function validate(input: PublishInput) {
-  if (input.expiresAt && Number.isNaN(Date.parse(input.expiresAt))) {
-    throw badRequest("invalid_expiry", "expires_at must be an ISO 8601 date-time");
-  }
-  if (input.expiresAt && input.expiresAt <= nowIso()) {
-    throw badRequest("invalid_expiry", "expires_at must be in the future");
-  }
   if (input.messages.length === 0) throw badRequest("no_messages", "Select at least one message to publish");
 }
 
@@ -277,6 +278,7 @@ function previewView(ctx: Ctx, r: VersionRow) {
     direction: conditionsOf(r)?.direction ?? null,
     published_at: r.created_at,
     expires_at: r.expires_at,
+    expiry: { set_by: r.expiry_source, reason: r.expiry_reason },
     expired: isExpired(r),
     message_count: (JSON.parse(r.messages) as unknown[]).length,
     creator: accountView(creator),

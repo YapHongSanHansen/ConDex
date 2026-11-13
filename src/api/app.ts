@@ -13,9 +13,10 @@ import { MCP_TOOLS, buildMcpServer } from "../mcp/server.ts";
 import { displayPath, findClaudeCli } from "../mcp/claudeCli.ts";
 import { type MessageSigner, NearCliError, NearCliSigner, findNearCli } from "../near/nearCli.ts";
 import {
-  type Principal, accountView, assertNearAccountId, authenticate, issueKey, listKeys, requireSession, revokeKey, updateDisplayName,
+  type Principal, accountView, assertNearAccountId, authenticate, issueKey, listKeys, requireScope, requireSession, revokeKey, updateDisplayName,
 } from "../services/accounts.ts";
 import { createChallenge, signOut, verifySignIn } from "../services/auth.ts";
+import { LlmExpiryAdvisor, type ExpiryAdvisor, resolveExpiry } from "../services/expiry.ts";
 import { getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight, thesisProof } from "../services/insights.ts";
 import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
@@ -40,6 +41,8 @@ export interface AppDeps {
   accessKeys?: AccessKeyChecker;
   /** Signer for one-click near-cli sign-in. Defaults to near-cli-rs if found (dev mode only); null disables it. */
   nearCli?: MessageSigner | null;
+  /** Sets a thesis's expiry when the creator gives none. Defaults to the configured reasoning model; null disables it. */
+  expiryAdvisor?: ExpiryAdvisor | null;
 }
 
 export function createApp(config: Config, deps: AppDeps = {}) {
@@ -53,6 +56,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     accessKeys: deps.accessKeys
       ?? (config.walletKeyCheck === "none" ? new NoAccessKeyCheck() : new RpcAccessKeyChecker(config.nearRpcUrl)),
     mcp: new Map(),
+    expiryAdvisor: deps.expiryAdvisor !== undefined ? deps.expiryAdvisor : config.llm ? new LlmExpiryAdvisor(config.llm) : null,
     nearCli: !config.devMode ? null : deps.nearCli !== undefined ? deps.nearCli : nearCliBinary ? new NearCliSigner(nearCliBinary) : null,
   };
 
@@ -244,20 +248,33 @@ export function createApp(config: Config, deps: AppDeps = {}) {
         exit: body.conditions.exit ?? null,
       }
       : null,
-    expiresAt: body.expires_at ?? null,
     feeNear: body.fee_near,
     payoutAccount: body.payout_account ?? null,
     messages: body.messages,
   });
 
-  app.post("/v1/insights", (req, res) => {
+  // Every thesis has an expiry: the creator's, or the one ConDex's AI sets. The scope is checked first,
+  // so only a caller allowed to publish can trigger a model call.
+  const publishInput = async (p: Principal, raw: unknown) => {
+    requireScope(p, "publish");
+    const body = parse(publishBody, raw);
+    const input = toPublishInput(body);
+    const expiry = await resolveExpiry(
+      ctx,
+      { expiresAt: body.expires_at, expiryDate: body.expiry_date, expiryTime: body.expiry_time },
+      { title: input.title, market: input.market, summary: input.summary, conditions: input.conditions, messages: input.messages },
+    );
+    return { ...input, expiry };
+  };
+
+  app.post("/v1/insights", async (req, res) => {
     const p = auth(req);
-    res.status(201).json(publishInsight(ctx, p, toPublishInput(parse(publishBody, req.body))));
+    res.status(201).json(publishInsight(ctx, p, await publishInput(p, req.body)));
   });
 
-  app.post("/v1/insights/:insightId/versions", (req, res) => {
+  app.post("/v1/insights/:insightId/versions", async (req, res) => {
     const p = auth(req);
-    res.status(201).json(publishVersion(ctx, p, req.params.insightId!, toPublishInput(parse(publishBody, req.body))));
+    res.status(201).json(publishVersion(ctx, p, req.params.insightId!, await publishInput(p, req.body)));
   });
 
   // ---- public (no wallet needed): publisher details and previews only ----
