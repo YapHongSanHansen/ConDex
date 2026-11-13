@@ -128,7 +128,7 @@ describe("connect wallet (NEP-413)", () => {
   test("receipts can only be read by the borrower and the creator", async () => {
     const s = await setupAliceAndBob(api);
     const quote = await api("POST", "/v1/quotes", { key: s.bobTrade, body: { token_id: s.tokenId } });
-    const order = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "buy", quantity: "1", authorise_fee: true } });
+    const order = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "sell", quantity: "1", authorise_fee: true } });
     const receiptId = (await api("POST", `/v1/sim/orders/${order.body.id}/fill`)).body.receipt.id;
     assert.equal((await api("GET", `/v1/receipts/${receiptId}`, { key: s.bobTrade })).status, 200);
     assert.equal((await api("GET", `/v1/receipts/${receiptId}`, { key: s.aliceSession })).status, 200);

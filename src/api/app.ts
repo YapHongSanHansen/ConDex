@@ -5,6 +5,7 @@ import type { Config } from "../config.ts";
 import type { Ctx } from "../context.ts";
 import { type Db, openDb, wipeDb } from "../db.ts";
 import { ApiError, badRequest, forbidden, notFound, unauthorized } from "../errors.ts";
+import { ClaudeExpiryEvaluator } from "../ai/claudeExpiry.ts";
 import { type ExecutionVenue, SimulatedVenue } from "../execution/venue.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import { MockLedger } from "../ledger/mockLedger.ts";
@@ -16,6 +17,7 @@ import {
   type Principal, accountView, assertNearAccountId, authenticate, issueKey, listKeys, requireSession, revokeKey, updateDisplayName,
 } from "../services/accounts.ts";
 import { createChallenge, signOut, verifySignIn } from "../services/auth.ts";
+import type { ExpiryEvaluator } from "../services/expiry.ts";
 import { getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight } from "../services/insights.ts";
 import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
@@ -40,6 +42,8 @@ export interface AppDeps {
   accessKeys?: AccessKeyChecker;
   /** Signer for one-click near-cli sign-in. Defaults to near-cli-rs if found (dev mode only); null disables it. */
   nearCli?: MessageSigner | null;
+  /** Sets the expiry of a thesis published without one. Defaults to Claude when config.expiryAi says so; null turns it off. */
+  expiryAi?: ExpiryEvaluator | null;
 }
 
 export function createApp(config: Config, deps: AppDeps = {}) {
@@ -53,6 +57,8 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     accessKeys: deps.accessKeys
       ?? (config.walletKeyCheck === "none" ? new NoAccessKeyCheck() : new RpcAccessKeyChecker(config.nearRpcUrl)),
     mcp: new Map(),
+    expiryAi: deps.expiryAi !== undefined ? deps.expiryAi : config.expiryAi === "claude" ? new ClaudeExpiryEvaluator() : null,
+    expiryAiUse: new Map(),
     nearCli: !config.devMode ? null : deps.nearCli !== undefined ? deps.nearCli : nearCliBinary ? new NearCliSigner(nearCliBinary) : null,
   };
 
@@ -99,6 +105,8 @@ export function createApp(config: Config, deps: AppDeps = {}) {
       ok: true, ledger: ctx.ledger.kind, venue: ctx.venue.name, dev_mode: config.devMode,
       near_network: config.nearNetwork, wallet_key_check: ctx.accessKeys.mode,
       storage: config.dbPath === ":memory:" ? "memory" : "file",
+      // Whether ConDex's AI sets the expiry of a thesis published without one (otherwise its default applies).
+      expiry_ai: ctx.expiryAi !== null,
       // Only for the test console on this computer: lets it print a ready-to-paste `claude mcp add`
       // command. The home folder is shown as $HOME, and the path is never sent to another machine.
       ...(config.devMode && isSameMachine(req) ? { mcp_server: displayPath(MCP_SERVER_PATH) } : {}),
@@ -234,22 +242,28 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   // ---- insights ----
   const toPublishInput = (body: ReturnType<typeof parse<typeof publishBody>>) => ({
     title: body.title,
-    market: body.market ?? null,
+    market: body.market,
+    direction: body.direction,
+    entry: body.entry,
+    invalidation: body.invalidation,
+    target: body.target || null,
     summary: body.summary ?? null,
-    expiresAt: body.expires_at ?? null,
+    // An empty string (an empty form field) means "not given".
+    expiryDate: body.expiry_date || null,
+    expiryTime: body.expiry_time || null,
     feeNear: body.fee_near,
     payoutAccount: body.payout_account ?? null,
     messages: body.messages,
   });
 
-  app.post("/v1/insights", (req, res) => {
+  app.post("/v1/insights", async (req, res) => {
     const p = auth(req);
-    res.status(201).json(publishInsight(ctx, p, toPublishInput(parse(publishBody, req.body))));
+    res.status(201).json(await publishInsight(ctx, p, toPublishInput(parse(publishBody, req.body))));
   });
 
-  app.post("/v1/insights/:insightId/versions", (req, res) => {
+  app.post("/v1/insights/:insightId/versions", async (req, res) => {
     const p = auth(req);
-    res.status(201).json(publishVersion(ctx, p, req.params.insightId!, toPublishInput(parse(publishBody, req.body))));
+    res.status(201).json(await publishVersion(ctx, p, req.params.insightId!, toPublishInput(parse(publishBody, req.body))));
   });
 
   // ---- public (no wallet needed): publisher details and previews only ----
@@ -360,6 +374,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
 
   app.post("/v1/dev/reset", devOnly, (_req, res) => {
     wipeDb(ctx.db);
+    ctx.expiryAiUse.clear();
     res.json({ ok: true });
   });
 

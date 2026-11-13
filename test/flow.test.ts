@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, describe, test } from "node:test";
-import { ETH_MESSAGES, connectWallet, placeOrder, setupAliceAndBob, startServer } from "./helpers.ts";
+import { ETH_MESSAGES, ETH_THESIS, connectWallet, placeOrder, setupAliceAndBob, startServer } from "./helpers.ts";
 
 const srv = await startServer();
 const { api } = srv;
@@ -193,15 +193,15 @@ describe("permissions and validation", () => {
 
   test("orders need explicit fee authorisation, a fresh quote and enough balance", async () => {
     const quote = await api("POST", "/v1/quotes", { key: s.bobTrade, body: { token_id: s.tokenId } });
-    const noAuth = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "buy", quantity: "1", authorise_fee: false } });
+    const noAuth = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "sell", quantity: "1", authorise_fee: false } });
     assert.equal(noAuth.body.error.code, "fee_not_authorised");
 
-    const ok = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "buy", quantity: "1", authorise_fee: true } });
+    const ok = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "sell", quantity: "1", authorise_fee: true } });
     assert.equal(ok.status, 201);
-    const reuse = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "buy", quantity: "1", authorise_fee: true } });
+    const reuse = await api("POST", "/v1/orders", { key: s.bobTrade, body: { quote_id: quote.body.quote_id, side: "sell", quantity: "1", authorise_fee: true } });
     assert.equal(reuse.body.error.code, "quote_used");
 
-    const pricey = await api("POST", "/v1/insights", { key: s.alicePublish, body: { title: "Pricey", market: "BTC-USD", fee_near: "5", messages: ETH_MESSAGES } });
+    const pricey = await api("POST", "/v1/insights", { key: s.alicePublish, body: { ...ETH_THESIS, title: "Pricey", market: "BTC-USD", fee_near: "5" } });
     const { order } = await placeOrder(api, s.bobTrade, pricey.body.token_id);
     assert.equal(order.status, 402);
     assert.equal(order.body.error.code, "insufficient_balance");
@@ -209,7 +209,7 @@ describe("permissions and validation", () => {
 
   test("new versions get new tokens and only the creator can publish them", async () => {
     const v2 = await api("POST", `/v1/insights/${s.published.body.insight_id}/versions`, {
-      key: s.alicePublish, body: { title: "ETH failed breakout (updated)", market: "ETH-USD", fee_near: "0.2", messages: ETH_MESSAGES },
+      key: s.alicePublish, body: { ...ETH_THESIS, title: "ETH failed breakout (updated)", fee_near: "0.2" },
     });
     assert.equal(v2.status, 201);
     assert.equal(v2.body.version, 2);
@@ -218,7 +218,7 @@ describe("permissions and validation", () => {
 
     const bobPublish = (await api("POST", "/v1/keys", { key: s.bobSession, body: { scopes: ["publish"] } })).body.secret;
     const denied = await api("POST", `/v1/insights/${s.published.body.insight_id}/versions`, {
-      key: bobPublish, body: { title: "hijack", fee_near: "0", messages: ETH_MESSAGES },
+      key: bobPublish, body: { ...ETH_THESIS, title: "hijack", fee_near: "0" },
     });
     assert.equal(denied.status, 403);
   });
@@ -230,7 +230,7 @@ describe("permissions and validation", () => {
     const badAcct = await connectWallet(api, "Not Valid!");
     assert.equal(badAcct.verify.body.error.code, "invalid_near_account");
     const expired = await api("POST", "/v1/insights", {
-      key: s.alicePublish, body: { title: "old", fee_near: "0.1", expires_at: "2020-01-01T00:00:00Z", messages: ETH_MESSAGES },
+      key: s.alicePublish, body: { ...ETH_THESIS, title: "old", expiry_date: "2020-01-01" },
     });
     assert.equal(expired.body.error.code, "invalid_expiry");
   });

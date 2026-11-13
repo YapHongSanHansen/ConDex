@@ -36,9 +36,20 @@ const message = z.object({
 
 const publishShape = {
   title: z.string().min(1).max(200).describe("Short title for the insight"),
-  market: z.string().max(64).optional().describe('Market the insight is about, e.g. "ETH-USD"'),
+  market: z.string().min(1).max(64).describe('Market the thesis trades, e.g. "ETH-USD". A linked order must be in this market.'),
+  direction: z.enum(["long", "short"]).describe("Direction of the thesis. A linked order must open this way: buy for long, sell for short."),
+  entry: z.string().min(1).max(500).describe("When to enter, in the creator's own words"),
+  invalidation: z.string().min(1).max(500).describe("What would prove the idea wrong, in the creator's own words"),
+  target: z.string().max(500).optional().describe("Optional. When to take profit or close"),
+  expiry_date: z.string().optional().describe(
+    "Last day a trade can be linked to the thesis, YYYY-MM-DD in UTC. Ask the creator for it before publishing. " +
+    "If they give none, leave it out: ConDex sets one and the result says so.",
+  ),
+  expiry_time: z.string().optional().describe(
+    'Time on that day in UTC, HH:MM. Only when the thesis depends on a time, such as "by the US open". ' +
+    "Without it the thesis expires at 23:59 UTC on the expiry date.",
+  ),
   summary: z.string().max(1000).optional().describe("Public one-paragraph preview. Do not include private details."),
-  expires_at: z.string().optional().describe("ISO date-time after which the insight can no longer be traded on"),
   fee_near: z.string().describe('Flat fee per filled order, in NEAR, e.g. "0.1"'),
   payout_account: z.string().optional().describe("NEAR account that receives fees. Defaults to the creator's account."),
   messages: z.array(message).min(1).describe(
@@ -86,32 +97,40 @@ export function buildMcpServer(opts: McpOptions): McpServer {
   server.registerTool("condex_publish_insight", {
     title: "Publish insight",
     description:
-      "Publish creator-approved messages from this conversation as a new ConDex insight. ConDex stores them privately " +
+      "Publish creator-approved messages from this conversation as a new ConDex insight, with the thesis conditions: " +
+      "market, direction, entry, invalidation and an optional target. Before publishing, ask the creator when the thesis " +
+      "expires: a date is always recorded, and a time only if the thesis depends on one. If the creator gives no date, " +
+      "ConDex sets it; tell the creator the expiry and the reason from the result. ConDex stores the messages privately " +
       "and mints a token on NEAR for this version. Readers read for free; the creator earns fee_near once per linked order that fills.",
     inputSchema: publishShape,
   }, (args) => call("POST", "/v1/insights", args));
 
   server.registerTool("condex_publish_version", {
     title: "Publish new version",
-    description: "Publish an updated version of an existing insight. It gets a new token; earlier tokens keep working.",
+    description:
+      "Publish an updated version of an existing insight, for example to change its conditions or expiry, which are " +
+      "fixed once published. It gets a new token; earlier tokens keep working. Ask the creator for the expiry as for a new insight.",
     inputSchema: { insight_id: z.string().describe("Insight id, e.g. ins_..."), ...publishShape },
   }, ({ insight_id, ...rest }) => call("POST", `/v1/insights/${encodeURIComponent(insight_id)}/versions`, rest));
 
   server.registerTool("condex_list_insights", {
     title: "List insights",
-    description: "List public previews of published insight tokens (no message content).",
+    description: "List public previews of published insight tokens: market, direction, expiry and fee (no message content).",
     inputSchema: { market: z.string().optional().describe("Filter by market") },
   }, ({ market }) => call("GET", `/v1/tokens${market ? `?market=${encodeURIComponent(market)}` : ""}`));
 
   server.registerTool("condex_read_insight", {
     title: "Read insight",
-    description: "Read the full approved conversation behind a token. Always free. Needs a key with read scope.",
+    description:
+      "Read the full approved conversation behind a token, with its conditions (market, direction, entry, invalidation, " +
+      "target) and its expiry. Always free, also after the expiry. Needs a key with read scope.",
     inputSchema: { token_id: z.string() },
   }, ({ token_id }) => call("GET", `/v1/tokens/${encodeURIComponent(token_id)}`));
 
   server.registerTool("condex_quote_fee", {
     title: "Quote fee",
-    description: "Get the fee for linking an order to this insight. Show it to the user before placing the order.",
+    description:
+      "Get the fee for linking an order to this insight. Show it to the user before placing the order. Refused once the insight has expired.",
     inputSchema: { token_id: z.string() },
   }, ({ token_id }) => call("POST", "/v1/quotes", { token_id }));
 
@@ -119,12 +138,14 @@ export function buildMcpServer(opts: McpOptions): McpServer {
     title: "Place linked order",
     description:
       "Place an order linked to an insight using a quote. Reserves the quoted fee, which is paid to the creator only if " +
-      "the order fills. Only call this after the user has approved the trade and the fee. Needs a key with trade scope.",
+      "the order fills. ConDex refuses the link unless the order is in the insight's market, opens in its direction " +
+      "(buy for long, sell for short) and is placed before it expires. Only call this after the user has approved the " +
+      "trade and the fee. Needs a key with trade scope.",
     inputSchema: {
       quote_id: z.string(),
       side: z.enum(["buy", "sell"]),
       quantity: z.string().describe('Order size as a decimal string, e.g. "0.5"'),
-      market: z.string().optional().describe("Defaults to the insight's market"),
+      market: z.string().optional().describe("Optional. If given, it must be the insight's market."),
       limit_price: z.string().optional(),
       authorise_fee: z.boolean().describe("Must be true: the user has approved reserving the quoted fee"),
     },

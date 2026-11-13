@@ -36,6 +36,11 @@ export interface Config {
   signInsPerMinute: number;
   /** Number of reverse proxies in front of the server, so client addresses come from X-Forwarded-For. */
   trustProxyHops: number;
+  /**
+   * Who sets the expiry of a thesis published without one. "claude": ConDex's AI reads the thesis
+   * (needs Anthropic credentials, e.g. ANTHROPIC_API_KEY). "off": only ConDex's default is applied.
+   */
+  expiryAi: "claude" | "off";
 }
 
 const DEV_EXECUTION_SECRET = "dev-execution-secret";
@@ -90,6 +95,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionTtlSeconds: parseInteger(env, "CONDEX_SESSION_TTL_SECONDS", 60 * 60 * 24),
     signInsPerMinute: parseInteger(env, "CONDEX_SIGNINS_PER_MINUTE", 60),
     trustProxyHops: parseInteger(env, "CONDEX_TRUST_PROXY", 0, 0),
+    // On when an Anthropic credential is in the environment, unless the setting says otherwise.
+    expiryAi: parseChoice(env, "CONDEX_EXPIRY_AI", ["claude", "off"] as const,
+      env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim() ? "claude" : "off"),
   };
 }
 

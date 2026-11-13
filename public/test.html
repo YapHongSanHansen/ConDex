@@ -435,16 +435,45 @@ async function connectDevWallet(accountId, displayName) {
 let KEY_CHECK = "?";
 
 // ---------------------------------------------------------------- reusable steps
-function publishBody(titleSuffix = "") {
+/** The publish request built from the section 2 fields. `change` overrides fields; undefined leaves one out. */
+function publishBody(titleSuffix = "", change = {}) {
   let messages;
   try { messages = JSON.parse(val("f-messages")); } catch { throw new Fail("Messages field is not valid JSON"); }
-  const body = { title: val("f-title") + titleSuffix, fee_near: val("f-fee"), messages };
-  if (val("f-market")) body.market = val("f-market");
+  const body = {
+    title: val("f-title") + titleSuffix, market: val("f-market"), direction: val("f-direction"),
+    entry: val("f-entry"), invalidation: val("f-invalidation"), fee_near: val("f-fee"), messages,
+  };
+  if (val("f-target")) body.target = val("f-target");
   if (val("f-summary")) body.summary = val("f-summary");
-  if (val("f-expires")) body.expires_at = new Date(val("f-expires")).toISOString();
+  if (val("f-expiry-date")) body.expiry_date = val("f-expiry-date");
+  if (val("f-expiry-time")) body.expiry_time = val("f-expiry-time");
   if (val("f-payout")) body.payout_account = val("f-payout");
-  return body;
+  return { ...body, ...change };
 }
+
+async function publishAs(body, ...codes) {
+  return expectStatus(await call("POST", "/v1/insights", { key: need("alicePublish", "Issue Alice's publish key"), body }), ...codes);
+}
+
+/** A date `days` ahead as YYYY-MM-DD in UTC, the format expiry_date takes. */
+const utcDate = (days) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+/** "2026-11-21 23:59:59 UTC" from an ISO time, without the seconds when they are zero. */
+const utcText = (iso) => `${iso.slice(0, 10)} ${iso.slice(17, 19) === "00" ? iso.slice(11, 16) : iso.slice(11, 19)} UTC`;
+const SET_BY = { creator: "the creator", condex_ai: "ConDex's AI", condex_default: "ConDex's default" };
+/** The side that opens a trade in the direction of a thesis. */
+const OPENS = { long: "buy", short: "sell" };
+
+/** Makes a published token the one the later sections use, and points the Side field the way its thesis opens. */
+function adoptToken(b) {
+  S.insightId = b.insight_id; S.tokenId = b.token_id;
+  document.getElementById("f-side").value = OPENS[b.direction];
+}
+
+/** The public preview of the token the later sections use: its market, direction and expiry. */
+async function currentThesis() {
+  return expectStatus(await call("GET", `/v1/tokens/${encodeURIComponent(need("tokenId", "Publish an insight"))}/preview`), 200);
+}
+const openingSide = async () => OPENS[(await currentThesis()).direction];
 
 async function newQuote() {
   const b = expectStatus(await call("POST", "/v1/quotes", { key: need("bobTrade", "Issue Bob's keys"), body: { token_id: need("tokenId", "Publish an insight") } }), 201);
@@ -452,9 +481,9 @@ async function newQuote() {
   return b;
 }
 
-async function newOrder({ quantity } = {}) {
+async function newOrder({ quantity, side } = {}) {
   await newQuote();
-  const body = { quote_id: S.quoteId, side: val("f-side"), quantity: quantity ?? val("f-qty"), authorise_fee: true };
+  const body = { quote_id: S.quoteId, side: side ?? val("f-side"), quantity: quantity ?? val("f-qty"), authorise_fee: true };
   if (val("f-limit")) body.limit_price = val("f-limit");
   const b = expectStatus(await call("POST", "/v1/orders", { key: S.bobTrade, body }), 201);
   S.orderId = b.id;
@@ -480,6 +509,8 @@ async function ensureSetup() {
       call("GET", `/v1/tokens/${encodeURIComponent(S.tokenId)}/preview`),
     ]);
     if (checks.every((r) => r.status === 200)) {
+      // Every thesis expires, and an expired one takes no new orders, so the demos then get a fresh one.
+      if (checks.at(-1).body.expired) await ACTION_BY_ID.publish.run();
       await topUpBob();
       return;
     }
@@ -501,7 +532,7 @@ async function settleTxCount() {
 
 // When run by "Run every button", sim buttons get a fresh open order so each has a known expected effect.
 let STRICT = false;
-async function freshOrderIfStrict() { if (STRICT) await newOrder(); }
+async function freshOrderIfStrict() { if (STRICT) await newOrder({ side: await openingSide() }); }
 function expectEffect(b, effect) {
   if (STRICT) expect(b.event.effect === effect, `expected effect "${effect}", got "${b.event.effect}"`);
   return `effect: ${b.event.effect}; order ${b.order.status}; settlement ${b.order.settlement.status}`;
@@ -526,7 +557,7 @@ const SECTIONS = [
         KEY_CHECK = b.wallet_key_check;
         STORAGE = b.storage;
         if (b.mcp_server) MCP_SERVER_PATH = b.mcp_server;
-        return `ledger ${b.ledger}, venue ${b.venue}, wallet key check ${b.wallet_key_check}, storage ${b.storage}`;
+        return `ledger ${b.ledger}, venue ${b.venue}, wallet key check ${b.wallet_key_check}, storage ${b.storage}, missing expiry set by ${b.expiry_ai ? "ConDex's AI" : "ConDex's default (AI off)"}`;
       } },
       { id: "reset", label: "Reset all data", run: async () => {
         expectStatus(await call("POST", "/v1/dev/reset"), 200);
@@ -590,13 +621,18 @@ const SECTIONS = [
   },
   {
     title: "2. Publish (creator's agent)",
-    hint: "Alice's agent uploads only the messages she approved. Each version is hashed and minted as its own token.",
+    hint: "Alice's agent uploads only the messages she approved, with the thesis conditions and an expiry. Market, direction, entry and invalidation are required. Leave the expiry date empty and ConDex sets one. Each version is hashed, with its conditions and expiry, and minted as its own token.",
     fields: `
       <label>Title<input id="f-title" value="ETH failed breakout"></label>
       <label>Market<input id="f-market" value="ETH-USD"></label>
+      <label>Direction<select id="f-direction"><option>short</option><option>long</option></select></label>
       <label>Fee per filled order (NEAR)<input id="f-fee" value="0.1"></label>
       <label>Payout account (optional)<input id="f-payout" placeholder="defaults to Alice"></label>
-      <label>Expires (optional)<input id="f-expires" type="datetime-local"></label>
+      <label>Expiry date (UTC)<input id="f-expiry-date" type="date"></label>
+      <label>Expiry time (UTC, optional)<input id="f-expiry-time" type="time"></label>
+      <label class="full">Entry<input id="f-entry" value="A 15-minute candle closes back below yesterday's UTC high."></label>
+      <label class="full">Invalidation<input id="f-invalidation" value="A 1-hour close above the sweep high."></label>
+      <label class="full">Exit or target (optional)<input id="f-target" value="Yesterday's UTC low."></label>
       <label class="full">Public summary<input id="f-summary" value="Fade a failed sweep of yesterday's UTC high."></label>
       <label class="full">Approved messages (JSON)<textarea id="f-messages">[
   {"role": "user", "content": "ETH swept yesterday's high. Is the breakout real?"},
@@ -604,19 +640,58 @@ const SECTIONS = [
 ]</textarea></label>`,
     actions: [
       { id: "publish", label: "Publish insight + mint token", run: async () => {
-        const b = expectStatus(await call("POST", "/v1/insights", { key: need("alicePublish", "Issue Alice's publish key"), body: publishBody() }), 201);
-        S.insightId = b.insight_id; S.tokenId = b.token_id;
+        const body = publishBody();
+        const b = await publishAs(body, 201);
+        adoptToken(b);
         expect(b.read_fee.yocto === "0", "reading must be free");
-        return `token ${b.token_id}, mint ${b.mint.tx} (${b.mint.ledger})`;
+        const c = b.conditions;
+        expect(c.market === body.market && c.direction === body.direction && c.entry === body.entry && c.invalidation === body.invalidation, "the conditions were not recorded as sent");
+        expect(body.expiry_date ? b.expiry.set_by === "creator" : b.expiry.set_by !== "creator", "wrong record of who set the expiry");
+        return `token ${b.token_id}: ${b.market} ${b.direction}, expires ${utcText(b.expires_at)} (set by ${SET_BY[b.expiry.set_by]}), mint ${b.mint.tx} (${b.mint.ledger})`;
       } },
       { id: "publishVersion", label: "Publish new version", run: async () => {
         const b = expectStatus(await call("POST", `/v1/insights/${need("insightId", "Publish an insight")}/versions`, { key: need("alicePublish", "Issue Alice's publish key"), body: publishBody(" (v2)") }), 201);
-        S.tokenId = b.token_id;
-        return `version ${b.version} → token ${b.token_id}`;
+        adoptToken(b);
+        return `version ${b.version} → token ${b.token_id}, with its own conditions and expiry (${utcText(b.expires_at)})`;
       } },
       { id: "publishWithReadKey", label: "Publish with Bob's read key (expect 403)", run: async () => {
         const b = expectStatus(await call("POST", "/v1/insights", { key: need("bobRead", "Issue Bob's keys"), body: publishBody() }), 403);
         return b.error.code;
+      } },
+      { id: "publishNoConditions", label: "Publish without conditions (expect 400)", run: async () => {
+        const b = await publishAs(publishBody(" (no conditions)", { direction: undefined, entry: undefined, invalidation: undefined }), 400);
+        expect(["direction", "entry", "invalidation"].every((f) => b.error.message.includes(f + ": ")), "the error should name each missing condition");
+        return b.error.message;
+      } },
+      { id: "publishDateOnly", label: "Expiry date only (ends 23:59 UTC)", run: async () => {
+        const day = utcDate(3);
+        const b = await publishAs(publishBody(" (date only)", { expiry_date: day, expiry_time: undefined }), 201);
+        expect(b.expires_at === day + "T23:59:59.000Z", `expected the end of ${day}, got ${b.expires_at}`);
+        expect(b.expiry.set_by === "creator" && b.expiry.time_given === false, "should be the creator's date, with no time");
+        const txs = expectStatus(await call("GET", "/v1/ledger/txs?limit=500"), 200).txs;
+        const mint = txs.find((t) => t.method === "mint_insight_token" && t.args.token_id === b.token_id);
+        expect(mint && mint.args.expires_at === b.expires_at && mint.args.expiry_set_by === "creator", "the expiry is not on the token record");
+        return `expires ${utcText(b.expires_at)}, set by the creator, recorded on the ${b.mint.ledger} ledger`;
+      } },
+      { id: "publishDateTime", label: "Expiry date + time", run: async () => {
+        const day = utcDate(3);
+        const b = await publishAs(publishBody(" (date + time)", { expiry_date: day, expiry_time: "13:30" }), 201);
+        expect(b.expires_at === day + "T13:30:00.000Z", `expected ${day} 13:30 UTC, got ${b.expires_at}`);
+        expect(b.expiry.time_given === true, "the time should be recorded as given");
+        return `expires ${utcText(b.expires_at)}`;
+      } },
+      { id: "publishNoExpiry", label: "No expiry given (ConDex sets it)", run: async () => {
+        const b = await publishAs(publishBody(" (no expiry)", { expiry_date: undefined, expiry_time: undefined }), 201);
+        expect(b.expiry.set_by === "condex_ai" || b.expiry.set_by === "condex_default", `ConDex should have set the expiry, got ${b.expiry.set_by}`);
+        expect(b.expiry.reason && b.notice, "ConDex must say why it chose the expiry");
+        expect(new Date(b.expires_at) > new Date(), "the expiry must be in the future");
+        return `${SET_BY[b.expiry.set_by]} set ${utcText(b.expires_at)}. ${b.expiry.reason}`;
+      } },
+      { id: "publishPastExpiry", label: "Expiry in the past (expect 400)", run: async () => {
+        return (await publishAs(publishBody(" (past)", { expiry_date: "2020-01-01", expiry_time: undefined }), 400)).error.message;
+      } },
+      { id: "publishTimeNoDate", label: "Expiry time without a date (expect 400)", run: async () => {
+        return (await publishAs(publishBody(" (time only)", { expiry_date: undefined, expiry_time: "13:30" }), 400)).error.message;
       } },
     ],
   },
@@ -663,6 +738,16 @@ const SECTIONS = [
         expect(b.your_reads.total_charged.yocto === "0", "repeated reads must cost nothing");
         return `${b.your_reads.count} reads, total charged ${b.your_reads.total_charged.near} NEAR`;
       } },
+      { id: "readConditions", label: "Read the thesis conditions (Bob)", run: async () => {
+        const tokenId = need("tokenId", "Publish an insight");
+        const b = expectStatus(await call("GET", `/v1/tokens/${tokenId}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
+        const c = b.conditions;
+        expect(c && c.market && c.direction && c.entry && c.invalidation, "the read should include every condition");
+        const pub = expectStatus(await call("GET", `/v1/tokens/${tokenId}/preview`), 200);
+        expect(pub.market === c.market && pub.direction === c.direction, "the preview should show the market and direction");
+        expect(pub.conditions === undefined && !JSON.stringify(pub).includes(c.invalidation), "the public preview must not include the entry or invalidation");
+        return `${c.market} ${c.direction} · entry: ${c.entry} · invalidation: ${c.invalidation} · target: ${c.target ?? "none"} · expires ${utcText(b.expires_at)} (set by ${SET_BY[b.expiry.set_by]})`;
+      } },
       { id: "readWithTradeKey", label: "Read with trade key (expect 403)", run: async () => {
         return expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobTrade", "Issue Bob's keys") }), 403).error.code;
       } },
@@ -670,7 +755,7 @@ const SECTIONS = [
   },
   {
     title: "5. Linked trade",
-    hint: "Bob quotes the fee, then authorises reserving it. The order is submitted to the venue only after the reserve.",
+    hint: "Bob quotes the fee, then authorises reserving it. ConDex links the order only if it is in the thesis's market, opens in its direction (sell for a short thesis, buy for a long one) and is placed before the expiry. The order is submitted to the venue only after the reserve.",
     fields: `
       <label>Side<select id="f-side"><option>sell</option><option>buy</option></select></label>
       <label>Quantity<input id="f-qty" value="2"></label>
@@ -689,7 +774,42 @@ const SECTIONS = [
       { id: "placeOrder", label: "Authorise fee + place order", run: async () => {
         const b = await newOrder();
         expect(b.settlement.reserve?.status === "reserved", "fee should be reserved");
-        return `order ${b.id} ${b.status}, fee ${b.fee.near} NEAR reserved`;
+        const m = b.thesis_match;
+        expect(m.checked.length === 3 && m.authorised_at < m.thesis_expires_at, "the order should record what was checked against the thesis");
+        return `order ${b.id} ${b.status}, matched to the thesis (${m.market}, ${m.direction}: opens with a ${m.opens_with}, before ${utcText(m.thesis_expires_at)}), fee ${b.fee.near} NEAR reserved`;
+      } },
+      { id: "orderWrongDirection", label: "Order against the thesis direction (expect 409)", run: async () => {
+        const before = (await refreshBalances()).bob;
+        await newQuote();
+        const against = (await openingSide()) === "sell" ? "buy" : "sell";
+        const b = expectStatus(await call("POST", "/v1/orders", { key: S.bobTrade, body: { quote_id: S.quoteId, side: against, quantity: val("f-qty"), authorise_fee: true } }), 409);
+        expect(b.error.code === "direction_mismatch", `expected direction_mismatch, got ${b.error.code}`);
+        const after = (await refreshBalances()).bob;
+        expect(after.reserved.yocto === before.reserved.yocto, "no fee may be reserved for a refused order");
+        return b.error.message;
+      } },
+      { id: "orderWrongMarket", label: "Order in another market (expect 409)", run: async () => {
+        await newQuote();
+        const thesis = await currentThesis();
+        const other = thesis.market.toUpperCase() === "BTC-USD" ? "SOL-USD" : "BTC-USD";
+        const b = expectStatus(await call("POST", "/v1/orders", { key: S.bobTrade, body: { quote_id: S.quoteId, side: OPENS[thesis.direction], quantity: val("f-qty"), market: other, authorise_fee: true } }), 409);
+        expect(b.error.code === "market_mismatch", `expected market_mismatch, got ${b.error.code}`);
+        return b.error.message;
+      } },
+      { id: "orderAfterExpiry", label: "Link after the thesis expired (expect 409, takes 3 seconds)", run: async () => {
+        // A thesis that expires in about two seconds: quote it before the expiry, then order after it.
+        const at = new Date(Math.ceil(Date.now() / 1000) * 1000 + 2000);
+        const iso = at.toISOString();
+        const thesis = await publishAs(publishBody(" (expires in 2s)", { expiry_date: iso.slice(0, 10), expiry_time: iso.slice(11, 19) }), 201);
+        const quote = expectStatus(await call("POST", "/v1/quotes", { key: need("bobTrade", "Issue Bob's keys"), body: { token_id: thesis.token_id } }), 201);
+        await new Promise((resolve) => setTimeout(resolve, at.getTime() - Date.now() + 100));
+        const order = expectStatus(await call("POST", "/v1/orders", { key: S.bobTrade, body: { quote_id: quote.quote_id, side: OPENS[thesis.direction], quantity: "1", authorise_fee: true } }), 409);
+        expect(order.error.code === "insight_expired", `expected insight_expired, got ${order.error.code}`);
+        const requote = expectStatus(await call("POST", "/v1/quotes", { key: S.bobTrade, body: { token_id: thesis.token_id } }), 409);
+        expect(requote.error.code === "insight_expired", "a new quote should be refused too");
+        const read = expectStatus(await call("GET", `/v1/tokens/${thesis.token_id}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
+        expect(read.expired === true && read.charge.yocto === "0", "an expired thesis stays readable for free");
+        return `expired at ${utcText(thesis.expires_at)}: the order and a new quote were refused, and it is still free to read`;
       } },
       { id: "placeWithoutAuth", label: "Place order without authorising fee (expect 400)", run: async () => {
         await newQuote();
@@ -819,7 +939,7 @@ const SECTIONS = [
       { id: "demo1", label: "① Publish + mint token", run: async () => {
         await ensureSetup();
         const b = expectStatus(await call("POST", "/v1/insights", { key: S.alicePublish, body: publishBody(" (demo)") }), 201);
-        S.insightId = b.insight_id; S.tokenId = b.token_id;
+        adoptToken(b);
         const txs = expectStatus(await call("GET", "/v1/ledger/txs"), 200).txs;
         expect(txs.some((t) => t.method === "mint_insight_token" && t.args.token_id === b.token_id), "mint tx not found on ledger");
         return `minted ${b.token_id} with hash ${b.content_hash.slice(0, 12)}…`;
@@ -838,7 +958,7 @@ const SECTIONS = [
       { id: "demo3", label: "③ Cancelled unfilled order releases fee", run: async () => {
         await ensureSetup();
         const before = (await refreshBalances()).bob;
-        await newOrder({ quantity: "1" });
+        await newOrder({ quantity: "1", side: await openingSide() });
         const mid = (await refreshBalances()).bob;
         expect(BigInt(mid.reserved.yocto) > BigInt(before.reserved.yocto), "fee was not reserved");
         const c = await sim("cancel");
@@ -851,7 +971,7 @@ const SECTIONS = [
         await ensureSetup();
         const before = (await refreshBalances()).alice;
         const settlesBefore = await settleTxCount();
-        const order = await newOrder({ quantity: "2" });
+        const order = await newOrder({ quantity: "2", side: await openingSide() });
         const f1 = await sim("fill", { quantity: "0.5", price: "3500" });
         expect(f1.event.effect === "settled", "first fill should settle");
         const rp = expectStatus(await call("POST", `/v1/sim/events/${f1.event.id}/replay`), 200);
@@ -866,10 +986,11 @@ const SECTIONS = [
       } },
       { id: "demo5", label: "⑤ Evidence labels", run: async () => {
         await ensureSetup();
-        await newOrder({ quantity: "1" });
+        const side = await openingSide();
+        await newOrder({ quantity: "1", side });
         const simFill = await sim("fill");
         expect(simFill.receipt.evidence_source === "simulated", "simulated fill not labelled");
-        await newOrder({ quantity: "1" });
+        await newOrder({ quantity: "1", side });
         const live = expectStatus(await call("POST", "/v1/execution/events", { secret: S.execSecret, body: { event_id: "evt_" + Date.now(), order_id: S.orderId, type: "fill", quantity: "1", source: "venue:demo" } }), 201);
         expect(live.receipt.evidence_source === "venue:demo", "live fill not labelled");
         return `"${simFill.receipt.evidence_label}" vs "${live.receipt.evidence_label}"`;
@@ -920,6 +1041,9 @@ async function runButton(btn, action) {
     btn.disabled = false;
   }
 }
+
+// Start with an expiry a week ahead. Clear the field to see ConDex set the expiry instead.
+document.getElementById("f-expiry-date").value = utcDate(7);
 
 document.querySelector('[data-inline="refresh-balances"]').addEventListener("click", () => refreshBalances().catch(() => {}));
 document.querySelector('[data-inline="clear-log"]').addEventListener("click", () => { logEl.innerHTML = ""; });
@@ -1285,9 +1409,9 @@ function renderPublished(tokens) {
     if (WALLET && t.creator.near_account_id === WALLET.account) { const m = document.createElement("span"); m.className = "tag mine"; m.textContent = "yours"; title.append(m); }
     if (t.expired) { const e = document.createElement("span"); e.className = "tag"; e.textContent = "expired"; title.append(e); }
     const meta = document.createElement("div"); meta.className = "meta";
-    meta.textContent = [t.market ?? "no market", "v" + t.version, t.fee_per_filled_order.near + " NEAR per filled order", "free to read", t.message_count + " messages"].join(" · ");
+    meta.textContent = [t.market, t.direction, "v" + t.version, t.fee_per_filled_order.near + " NEAR per filled order", "free to read", t.message_count + " messages"].join(" · ");
     const who = document.createElement("div"); who.className = "meta";
-    who.textContent = "by " + t.creator.near_account_id + (t.expires_at ? " · expires " + new Date(t.expires_at).toLocaleString() : "") + " · minted on " + (t.mint?.ledger ?? "?") + (t.mint?.tx ? " (" + t.mint.tx + ")" : "");
+    who.textContent = "by " + t.creator.near_account_id + " · " + (t.expired ? "expired " : "expires ") + new Date(t.expires_at).toLocaleString() + " (set by " + (SET_BY[t.expiry?.set_by] ?? "?") + ")" + " · minted on " + (t.mint?.ledger ?? "?") + (t.mint?.tx ? " (" + t.mint.tx + ")" : "");
     const idRow = document.createElement("div"); idRow.className = "tokenid";
     const code = document.createElement("code"); code.textContent = t.token_id;
     const btn = document.createElement("button"); btn.textContent = "Copy token ID";

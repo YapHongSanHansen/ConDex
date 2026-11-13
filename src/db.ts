@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -69,22 +69,33 @@ CREATE TABLE IF NOT EXISTS insights (
   created_at  TEXT NOT NULL
 );
 
--- Each published version gets its own token.
+-- Each published version gets its own token. A version is never edited: its conditions and expiry
+-- are fixed when it is published, and covered by content_hash.
 CREATE TABLE IF NOT EXISTS insight_versions (
-  token_id        TEXT PRIMARY KEY,
-  insight_id      TEXT NOT NULL REFERENCES insights(id),
-  version         INTEGER NOT NULL,
-  creator_id      TEXT NOT NULL REFERENCES accounts(id),
-  payout_account  TEXT NOT NULL,
-  fee_yocto       TEXT NOT NULL,
-  title           TEXT NOT NULL,
-  market          TEXT,
-  summary         TEXT,
-  expires_at      TEXT,
-  messages        TEXT NOT NULL,        -- JSON array, private: served only to read-scoped keys
-  content_hash    TEXT NOT NULL,
-  mint_tx         TEXT NOT NULL,
-  created_at      TEXT NOT NULL,
+  token_id          TEXT PRIMARY KEY,
+  insight_id        TEXT NOT NULL REFERENCES insights(id),
+  version           INTEGER NOT NULL,
+  creator_id        TEXT NOT NULL REFERENCES accounts(id),
+  payout_account    TEXT NOT NULL,
+  fee_yocto         TEXT NOT NULL,
+  title             TEXT NOT NULL,
+  summary           TEXT,
+  -- Thesis conditions. Market and direction are public and checked against linked orders;
+  -- entry, invalidation and target are the creator's words, served with the conversation.
+  market            TEXT NOT NULL,
+  direction         TEXT NOT NULL,      -- long | short
+  entry             TEXT NOT NULL,
+  invalidation      TEXT NOT NULL,
+  target            TEXT,
+  -- Expiry. Every version has one.
+  expires_at        TEXT NOT NULL,      -- ISO 8601, UTC
+  expiry_time_given INTEGER NOT NULL,   -- 0: only a date was set, so it expires at the end of that day
+  expiry_set_by     TEXT NOT NULL,      -- creator | condex_ai | condex_default
+  expiry_reason     TEXT,               -- why ConDex chose it; NULL when the creator set it
+  messages          TEXT NOT NULL,      -- JSON array, private: served only to read-scoped keys
+  content_hash      TEXT NOT NULL,
+  mint_tx           TEXT NOT NULL,
+  created_at        TEXT NOT NULL,
   UNIQUE (insight_id, version)
 );
 
@@ -171,6 +182,9 @@ CREATE TABLE IF NOT EXISTS ledger_tokens (
   payout_account  TEXT NOT NULL,
   fee_yocto       TEXT NOT NULL,
   content_hash    TEXT NOT NULL,
+  issued_at       TEXT NOT NULL,          -- when the thesis was published
+  expires_at      TEXT NOT NULL,          -- when it expires
+  expiry_set_by   TEXT NOT NULL,          -- creator | condex_ai | condex_default
   mint_tx         TEXT NOT NULL
 );
 

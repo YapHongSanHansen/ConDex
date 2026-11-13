@@ -51,6 +51,25 @@ export const ETH_MESSAGES = [
   },
 ];
 
+/** A date `days` from now as YYYY-MM-DD (UTC), for an expiry that is still ahead whenever the tests run. */
+export function futureDate(days: number): string {
+  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** A complete publish request: the approved messages plus the conditions and expiry every thesis records. */
+export const ETH_THESIS = {
+  title: "ETH failed breakout",
+  market: "ETH-USD",
+  direction: "short",
+  entry: "A 15-minute candle closes back below yesterday's UTC high.",
+  invalidation: "A 1-hour close above the sweep high.",
+  target: "Yesterday's UTC low.",
+  expiry_date: futureDate(7),
+  summary: "Fade a failed sweep of yesterday's high.",
+  fee_near: "0.1",
+  messages: ETH_MESSAGES,
+};
+
 /** Does what a NEAR wallet does on "Connect wallet": signs the NEP-413 challenge with an ed25519 key. */
 export async function connectWallet(api: Api, accountId: string, opts: { displayName?: string; key?: KeyObject } = {}) {
   const privateKey = opts.key ?? generateKeyPairSync("ed25519").privateKey;
@@ -73,13 +92,11 @@ export async function setupAliceAndBob(api: Api) {
   const bobRead = (await api("POST", "/v1/keys", { key: bobSession, body: { scopes: ["read"], label: "bob research" } })).body.secret as string;
   const bobTrade = (await api("POST", "/v1/keys", { key: bobSession, body: { scopes: ["trade"], label: "bob trading" } })).body.secret as string;
   await api("POST", "/v1/ledger/deposit", { key: bobSession, body: { amount_near: "1" } });
-  const published = await api("POST", "/v1/insights", {
-    key: alicePublish,
-    body: { title: "ETH failed breakout", market: "ETH-USD", summary: "Fade a failed sweep of yesterday's high.", fee_near: "0.1", messages: ETH_MESSAGES },
-  });
+  const published = await api("POST", "/v1/insights", { key: alicePublish, body: ETH_THESIS });
   return { aliceSession, bobSession, alicePublish, bobRead, bobTrade, tokenId: published.body.token_id as string, published };
 }
 
+/** Quotes and places an order that matches the short ETH thesis: a sell. */
 export async function placeOrder(api: Api, tradeKey: string, tokenId: string, quantity = "2") {
   const quote = await api("POST", "/v1/quotes", { key: tradeKey, body: { token_id: tokenId } });
   const order = await api("POST", "/v1/orders", {

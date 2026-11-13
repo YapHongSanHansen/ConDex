@@ -35,14 +35,35 @@ export const messageSchema = z.object({
   at: z.string().max(40).optional(),
 });
 
+/** A condition every thesis records. The message says what to send, for agents that publish without it. */
+const condition = (max: number, what: string) =>
+  z.string({ error: `is required: ${what}` }).trim().min(1, `is required: ${what}`).max(max);
+
 export const publishBody = z.object({
   title: z.string().min(1).max(200),
-  market: z.string().min(1).max(64).nullable().optional(),
+  // Thesis conditions.
+  market: condition(64, 'what is traded, for example "ETH-USD"'),
+  direction: z.enum(["long", "short"], { error: 'must be "long" or "short"' }),
+  entry: condition(500, "when to enter, in the creator's words"),
+  invalidation: condition(500, "what would prove the idea wrong, in the creator's words"),
+  target: z.string().trim().max(500).nullable().optional(),
   summary: z.string().max(1000).nullable().optional(),
-  expires_at: z.string().nullable().optional(),
+  // Expiry, in UTC. Without a date, ConDex sets the expiry and says so in the response.
+  expiry_date: z.string().trim().max(40).nullable().optional(),
+  expiry_time: z.string().trim().max(40).nullable().optional(),
+  // Replaced by the two fields above. Named here so a client that still sends it is told, not ignored.
+  expires_at: z.unknown().optional(),
   fee_near: nearAmount,
   payout_account: z.string().nullable().optional(),
   messages: z.array(messageSchema).min(1).max(200),
+}).superRefine((body, ctx) => {
+  if (body.expires_at !== undefined && body.expires_at !== null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["expires_at"],
+      message: "is no longer accepted. Send expiry_date (YYYY-MM-DD) and, if the thesis depends on a time, expiry_time (HH:MM, UTC)",
+    });
+  }
 });
 
 export const depositBody = z.object({ amount_near: nearAmount });

@@ -4,6 +4,7 @@ import type { ExecutionVenue } from "./execution/venue.ts";
 import type { Ledger } from "./ledger/ledger.ts";
 import type { AccessKeyChecker } from "./near/accessKeys.ts";
 import type { MessageSigner } from "./near/nearCli.ts";
+import type { ExpiryEvaluator } from "./services/expiry.ts";
 
 /** An MCP server that has said hello for one API key. Kept in memory only: it describes a live process. */
 export interface McpConnection {
@@ -24,4 +25,8 @@ export interface Ctx {
   nearCli: MessageSigner | null;
   /** MCP servers that have connected, by API key id. */
   mcp: Map<string, McpConnection>;
+  /** ConDex's AI for a thesis published without an expiry. null: only the default expiry is applied. */
+  expiryAi: ExpiryEvaluator | null;
+  /** When each account used the expiry AI in the past hour, to cap paid model calls. */
+  expiryAiUse: Map<string, number[]>;
 }

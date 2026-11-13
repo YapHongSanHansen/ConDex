@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { displayPath, findClaudeCli } from "../src/mcp/claudeCli.ts";
 import { buildMcpServer, sayHello } from "../src/mcp/server.ts";
-import { ETH_MESSAGES, connectWallet, startServer } from "./helpers.ts";
+import { ETH_MESSAGES, connectWallet, futureDate, startServer } from "./helpers.ts";
 
 const srv = await startServer();
 after(() => srv.close());
@@ -40,10 +40,36 @@ test("a creator's agent publishes and a borrower's agent reads and trades over M
 
   const published = json(await aliceAgent.callTool({
     name: "condex_publish_insight",
-    arguments: { title: "ETH failed breakout", market: "ETH-USD", fee_near: "0.1", messages: ETH_MESSAGES },
+    arguments: {
+      title: "ETH failed breakout", market: "ETH-USD", direction: "short",
+      entry: "A 15-minute candle closes back below yesterday's UTC high.",
+      invalidation: "A 1-hour close above the sweep high.",
+      expiry_date: futureDate(3), expiry_time: "13:30", fee_near: "0.1", messages: ETH_MESSAGES,
+    },
   }));
   assert.equal(published.isError, false);
   const tokenId = published.body.token_id;
+  assert.equal(published.body.expires_at, `${futureDate(3)}T13:30:00.000Z`);
+  assert.equal(published.body.expiry.set_by, "creator");
+
+  // An agent that leaves out a condition is told, and nothing is published.
+  const incomplete = json(await aliceAgent.callTool({
+    name: "condex_publish_insight",
+    arguments: { title: "No conditions", market: "ETH-USD", fee_near: "0.1", messages: ETH_MESSAGES },
+  }));
+  assert.equal(incomplete.isError, true);
+
+  // Without an expiry date ConDex sets one, and the result tells the agent so it can tell the creator.
+  const undated = json(await aliceAgent.callTool({
+    name: "condex_publish_insight",
+    arguments: {
+      title: "ETH no date", market: "ETH-USD", direction: "short", entry: "Close below the high.",
+      invalidation: "Close above the sweep high.", fee_near: "0.1", messages: ETH_MESSAGES,
+    },
+  }));
+  assert.equal(undated.isError, false);
+  assert.equal(undated.body.expiry.set_by, "condex_default");
+  assert.match(undated.body.notice, /No expiry date was given/);
 
   // Alice's publish-only key cannot read.
   const denied = json(await aliceAgent.callTool({ name: "condex_read_insight", arguments: { token_id: tokenId } }));
@@ -57,6 +83,17 @@ test("a creator's agent publishes and a borrower's agent reads and trades over M
   const read = json(await bobAgent.callTool({ name: "condex_read_insight", arguments: { token_id: tokenId } }));
   assert.equal(read.body.charge.near, "0");
   assert.equal(read.body.messages.length, 2);
+  assert.equal(read.body.conditions.direction, "short");
+  assert.equal(read.body.conditions.invalidation, "A 1-hour close above the sweep high.");
+
+  // The borrower's agent cannot link an order that opens against the thesis.
+  const wrongWay = json(await bobAgent.callTool({ name: "condex_quote_fee", arguments: { token_id: tokenId } }));
+  const refused = json(await bobAgent.callTool({
+    name: "condex_place_order",
+    arguments: { quote_id: wrongWay.body.quote_id, side: "buy", quantity: "1", authorise_fee: true },
+  }));
+  assert.equal(refused.isError, true);
+  assert.match(refused.body, /direction_mismatch/);
 
   const quote = json(await bobAgent.callTool({ name: "condex_quote_fee", arguments: { token_id: tokenId } }));
   const order = json(await bobAgent.callTool({

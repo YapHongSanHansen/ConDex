@@ -1,7 +1,7 @@
 import { type Db, transaction } from "../db.ts";
 import { conflict, paymentRequired } from "../errors.ts";
 import { nowIso, sha256Hex } from "../util.ts";
-import type { Ledger, LedgerBalance, LedgerReserve, LedgerTx } from "./ledger.ts";
+import type { Ledger, LedgerBalance, LedgerReserve, LedgerTx, MintInput } from "./ledger.ts";
 
 interface BalanceRow { account: string; available_yocto: string; reserved_yocto: string; earned_yocto: string }
 interface ReserveRow {
@@ -18,7 +18,7 @@ export class MockLedger implements Ledger {
     this.db = db;
   }
 
-  mintToken(input: { tokenId: string; owner: string; payoutAccount: string; feeYocto: bigint; contentHash: string }) {
+  mintToken(input: MintInput) {
     return transaction(this.db, () => {
       const existing = this.db.prepare("SELECT mint_tx FROM ledger_tokens WHERE token_id = ?").get(input.tokenId) as
         | { mint_tx: string } | undefined;
@@ -29,10 +29,17 @@ export class MockLedger implements Ledger {
         payout_account: input.payoutAccount,
         fee_yocto: input.feeYocto.toString(),
         content_hash: input.contentHash,
+        issued_at: input.issuedAt,
+        expires_at: input.expiresAt,
+        expiry_set_by: input.expirySetBy,
       });
       this.db.prepare(
-        "INSERT INTO ledger_tokens (token_id, owner, payout_account, fee_yocto, content_hash, mint_tx) VALUES (?, ?, ?, ?, ?, ?)",
-      ).run(input.tokenId, input.owner, input.payoutAccount, input.feeYocto.toString(), input.contentHash, tx);
+        `INSERT INTO ledger_tokens (token_id, owner, payout_account, fee_yocto, content_hash, issued_at, expires_at,
+           expiry_set_by, mint_tx) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        input.tokenId, input.owner, input.payoutAccount, input.feeYocto.toString(), input.contentHash,
+        input.issuedAt, input.expiresAt, input.expirySetBy, tx,
+      );
       return { tx };
     });
   }

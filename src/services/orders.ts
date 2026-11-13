@@ -4,7 +4,7 @@ import { badRequest, conflict, forbidden, notFound } from "../errors.ts";
 import { formatDecimal, parseDecimal } from "../quantity.ts";
 import { amount, newId, nowIso } from "../util.ts";
 import { type Principal, getAccount, requireScope } from "./accounts.ts";
-import { getVersion, isExpired } from "./insights.ts";
+import { type Direction, type VersionRow, getVersion, isExpired } from "./insights.ts";
 import { ingestEvent } from "./settlement.ts";
 
 export type OrderStatus = "submitted" | "open" | "partially_filled" | "filled" | "cancelled" | "rejected" | "expired";
@@ -24,12 +24,15 @@ interface QuoteRow {
 
 export const TERMINAL_STATUSES: OrderStatus[] = ["filled", "cancelled", "rejected", "expired"];
 
+/** The side that opens a trade in the direction of the thesis. */
+export const OPENING_SIDE: Record<Direction, "buy" | "sell"> = { long: "buy", short: "sell" };
+
 /** Step 1 of a linked trade: fix the fee for this insight version so the borrower can see it before authorising. */
 export function createQuote(ctx: Ctx, principal: Principal, tokenId: string) {
   requireScope(principal, "trade");
   const version = getVersion(ctx, tokenId);
   assertNotSelfLink(ctx, principal, version.creator_id, version.payout_account);
-  if (isExpired(version)) throw conflict("insight_expired", `Insight ${tokenId} expired at ${version.expires_at}`);
+  assertNotExpired(version);
   const quote: QuoteRow = {
     id: newId("quote"),
     token_id: tokenId,
@@ -56,13 +59,17 @@ export interface PlaceOrderInput {
   quoteId: string;
   side: "buy" | "sell";
   quantity: string;
+  /** Optional. When given it must be the market of the thesis. */
   market?: string | null;
   limitPrice?: string | null;
   /** Must be true: the borrower explicitly authorises reserving the quoted fee. */
   authoriseFee: boolean;
 }
 
-/** Step 2: reserve the quoted fee on the ledger, then submit the order to the execution venue. */
+/**
+ * Step 2: check the order against the thesis, reserve the quoted fee on the ledger, then submit the
+ * order to the execution venue. An order that does not match the thesis is refused before anything is reserved.
+ */
 export function placeOrder(ctx: Ctx, principal: Principal, input: PlaceOrderInput) {
   requireScope(principal, "trade");
   if (input.authoriseFee !== true) {
@@ -78,18 +85,17 @@ export function placeOrder(ctx: Ctx, principal: Principal, input: PlaceOrderInpu
     if (quote.expires_at <= nowIso()) throw conflict("quote_expired", "This quote has expired. Request a new one.");
 
     const version = getVersion(ctx, quote.token_id);
-    if (isExpired(version)) throw conflict("insight_expired", `Insight ${version.token_id} has expired`);
-    const market = input.market ?? version.market;
-    if (!market) throw badRequest("market_required", "This insight has no market, so the order must name one");
-
+    // One clock reading: the time checked against the expiry is the time recorded on the order.
     const now = nowIso();
+    assertMatchesThesis(version, input, now);
+
     const row: OrderRow = {
       id: newId("ord"),
       borrower_id: principal.account.id,
       key_id: principal.keyId,
       token_id: version.token_id,
       quote_id: quote.id,
-      market,
+      market: version.market,
       side: input.side,
       quantity: formatDecimal(quantity),
       limit_price: limitPrice,
@@ -157,6 +163,7 @@ export function loadOrder(ctx: Ctx, orderId: string): OrderRow {
 
 export function orderView(ctx: Ctx, r: OrderRow) {
   const reserve = ctx.ledger.getReserve(r.id);
+  const version = getVersion(ctx, r.token_id);
   const events = ctx.db.prepare(
     "SELECT id, type, quantity, price, source, effect, receipt_id, received_at FROM execution_events WHERE order_id = ? ORDER BY received_at, rowid",
   ).all(r.id);
@@ -171,6 +178,17 @@ export function orderView(ctx: Ctx, r: OrderRow) {
     filled_quantity: r.filled_quantity,
     status: r.status,
     venue: { name: r.venue, order_id: r.venue_order_id, status_known: r.venue_status_known === 1 },
+    /** What was checked against the thesis when the order was authorised. An order that failed a check was never linked. */
+    thesis_match: {
+      token_id: r.token_id,
+      content_hash: version.content_hash,
+      market: version.market,
+      direction: version.direction,
+      opens_with: r.side,
+      thesis_expires_at: version.expires_at,
+      authorised_at: r.created_at,
+      checked: ["market", "direction", "authorised_before_expiry"],
+    },
     fee: amount(r.fee_yocto),
     settlement: {
       status: r.settlement_status,
@@ -184,6 +202,32 @@ export function orderView(ctx: Ctx, r: OrderRow) {
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
+}
+
+function assertNotExpired(version: VersionRow, at: string = nowIso()) {
+  if (isExpired(version, at)) {
+    throw conflict("insight_expired", `Insight ${version.token_id} expired at ${version.expires_at}, so no new trade can be linked to it`);
+  }
+}
+
+/**
+ * A trade counts as a trade of the thesis only if it is in the thesis's market, opens in its direction
+ * and is authorised before it expires. Entry and invalidation are the creator's own words, so they are
+ * not judged here.
+ */
+function assertMatchesThesis(version: VersionRow, input: PlaceOrderInput, authorisedAt: string) {
+  assertNotExpired(version, authorisedAt);
+  const market = input.market?.trim();
+  if (market && market.toUpperCase() !== version.market.toUpperCase()) {
+    throw conflict("market_mismatch", `This thesis is about ${version.market}, so an order in ${market} cannot be linked to it`);
+  }
+  const opens = OPENING_SIDE[version.direction];
+  if (input.side !== opens) {
+    throw conflict(
+      "direction_mismatch",
+      `This thesis is ${version.direction}, so a linked order must open with a ${opens}, not a ${input.side}`,
+    );
+  }
 }
 
 /** The creator earns from other traders' orders, so an order may not link to the borrower's own insight. */
