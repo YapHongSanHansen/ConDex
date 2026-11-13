@@ -4,11 +4,13 @@ import express, { type NextFunction, type Request, type Response } from "express
 import type { Config } from "../config.ts";
 import type { Ctx } from "../context.ts";
 import { type Db, openDb, wipeDb } from "../db.ts";
-import { ApiError, forbidden, notFound, unauthorized } from "../errors.ts";
+import { ApiError, badRequest, forbidden, notFound, unauthorized } from "../errors.ts";
 import { type ExecutionVenue, SimulatedVenue } from "../execution/venue.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import { MockLedger } from "../ledger/mockLedger.ts";
 import { type AccessKeyChecker, NoAccessKeyCheck, RpcAccessKeyChecker } from "../near/accessKeys.ts";
+import { MCP_TOOLS, buildMcpServer } from "../mcp/server.ts";
+import { displayPath, findClaudeCli } from "../mcp/claudeCli.ts";
 import { type MessageSigner, NearCliError, NearCliSigner, findNearCli } from "../near/nearCli.ts";
 import {
   type Principal, accountView, assertNearAccountId, authenticate, issueKey, listKeys, requireSession, revokeKey, updateDisplayName,
@@ -50,6 +52,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     venue: deps.venue ?? new SimulatedVenue(),
     accessKeys: deps.accessKeys
       ?? (config.walletKeyCheck === "none" ? new NoAccessKeyCheck() : new RpcAccessKeyChecker(config.nearRpcUrl)),
+    mcp: new Map(),
     nearCli: !config.devMode ? null : deps.nearCli !== undefined ? deps.nearCli : nearCliBinary ? new NearCliSigner(nearCliBinary) : null,
   };
 
@@ -83,7 +86,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
       near_network: config.nearNetwork, wallet_key_check: ctx.accessKeys.mode,
       storage: config.dbPath === ":memory:" ? "memory" : "file",
       // Dev mode only: lets the test console print a ready-to-paste `claude mcp add` command.
-      ...(config.devMode ? { mcp_server: MCP_SERVER_PATH } : {}),
+      ...(config.devMode ? { mcp_server: displayPath(MCP_SERVER_PATH) } : {}),
     });
   });
 
@@ -164,11 +167,54 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   });
 
   app.get("/v1/keys", (req, res) => {
-    res.json({ keys: listKeys(ctx, auth(req)) });
+    res.json({ keys: listKeys(ctx, auth(req)).map((k) => ({ ...k, mcp: ctx.mcp.get(k.id) ?? null })) });
+  });
+
+  // ---- MCP: what an agent gets, and proof that Claude Code connected ----
+  buildMcpServer({ apiUrl: "http://localhost", apiKey: undefined }); // fills MCP_TOOLS
+  app.get("/v1/mcp/tools", (_req, res) => {
+    res.json({ tools: MCP_TOOLS });
+  });
+
+  // Sent by the MCP server when Claude Code starts it. Only an API key can say hello, so the console's
+  // "connected" light means a real agent process is using that key, not just that the key exists.
+  app.post("/v1/mcp/hello", (req, res) => {
+    const p = auth(req);
+    if (p.via !== "api_key") throw badRequest("api_key_required", "Say hello with the MCP key, not a wallet session");
+    const body = (req.body ?? {}) as { client?: unknown; tools?: unknown };
+    const now = new Date().toISOString();
+    const prev = ctx.mcp.get(p.keyId);
+    ctx.mcp.set(p.keyId, {
+      connectedAt: prev?.connectedAt ?? now,
+      lastSeenAt: now,
+      client: typeof body.client === "string" ? body.client.slice(0, 40) : "mcp",
+      tools: Array.isArray(body.tools) ? body.tools.filter((t): t is string => typeof t === "string").slice(0, 50) : [],
+    });
+    res.json({ ok: true, account: p.account.near_account_id, scopes: p.scopes });
+  });
+
+  // Disconnect Claude Code: revoke this account's MCP keys. The agent keeps its config but every call now fails.
+  app.post("/v1/mcp/disconnect", (req, res) => {
+    const p = auth(req);
+    requireSession(p);
+    const keys = listKeys(ctx, p).filter((k) => !k.revoked_at && (k.label === "MCP agent" || ctx.mcp.has(k.id)));
+    for (const k of keys) {
+      revokeKey(ctx, p, k.id);
+      ctx.mcp.delete(k.id);
+    }
+    res.json({ revoked: keys.length });
+  });
+
+  // Dev mode, this computer only: where is the Claude Code CLI? Helps when a terminal says "command not found: claude".
+  app.get("/v1/dev/claude-cli", devOnly, (req, res) => {
+    assertSameMachine(req);
+    res.json(findClaudeCli());
   });
 
   app.delete("/v1/keys/:keyId", (req, res) => {
-    res.json(revokeKey(ctx, auth(req), req.params.keyId!));
+    const view = revokeKey(ctx, auth(req), req.params.keyId!);
+    ctx.mcp.delete(req.params.keyId!); // a revoked key is no longer a connected agent
+    res.json(view);
   });
 
   // ---- insights ----
@@ -303,6 +349,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   });
 
   app.get("/test", devOnly, (_req, res) => {
+    res.set("Cache-Control", "no-store"); // always the current console, never a copy left in the browser
     res.sendFile(TEST_PAGE);
   });
 
