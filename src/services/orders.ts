@@ -4,7 +4,7 @@ import { badRequest, conflict, forbidden, notFound } from "../errors.ts";
 import { formatDecimal, parseDecimal } from "../quantity.ts";
 import { amount, newId, nowIso } from "../util.ts";
 import { type Principal, getAccount, requireScope } from "./accounts.ts";
-import { getVersion, isExpired } from "./insights.ts";
+import { type VersionRow, conditionsOf, getVersion, isExpired } from "./insights.ts";
 import { ingestEvent } from "./settlement.ts";
 
 export type OrderStatus = "submitted" | "open" | "partially_filled" | "filled" | "cancelled" | "rejected" | "expired";
@@ -81,6 +81,7 @@ export function placeOrder(ctx: Ctx, principal: Principal, input: PlaceOrderInpu
     if (isExpired(version)) throw conflict("insight_expired", `Insight ${version.token_id} has expired`);
     const market = input.market ?? version.market;
     if (!market) throw badRequest("market_required", "This insight has no market, so the order must name one");
+    assertMatchesThesis(version, market, input.side);
 
     const now = nowIso();
     const row: OrderRow = {
@@ -184,6 +185,21 @@ export function orderView(ctx: Ctx, r: OrderRow) {
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
+}
+
+/**
+ * A trade counts as a trade of the thesis only if it is in the thesis's market and opens in its direction
+ * (long opens with a buy, short with a sell). Entry and invalidation are in the creator's words, so they are
+ * not judged here: the proof of trade shows the real fill beside them.
+ */
+function assertMatchesThesis(version: VersionRow, market: string, side: "buy" | "sell") {
+  if (version.market && market.toUpperCase() !== version.market.toUpperCase()) {
+    throw conflict("market_mismatch", `This thesis is about ${version.market}, so an order in ${market} cannot be linked to it`);
+  }
+  const direction = conditionsOf(version)?.direction;
+  if (direction && side !== (direction === "long" ? "buy" : "sell")) {
+    throw conflict("direction_mismatch", `This thesis is ${direction}, so a ${side} order cannot be linked to it`);
+  }
 }
 
 /** The creator earns from other traders' orders, so an order may not link to the borrower's own insight. */
