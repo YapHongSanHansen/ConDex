@@ -170,12 +170,13 @@ The API and code call a thesis an *insight*, and its fingerprint a `content_hash
 | Expiry date required, with a reminder | Not built. The expiry is optional. |
 | ConDex’s AI sets a missing expiry | Not built. A thesis published without an expiry never expires. |
 | Expiry stops new trades | Built. After the expiry, fee quotes and linked orders are refused, and reading still works. |
-| Thesis conditions as fields | Partly. The market, title, summary and messages are recorded. Direction, entry, invalidation and target are not separate fields. |
+| Thesis conditions as fields | Built. `conditions` holds direction (long or short), entry, invalidation and an optional exit, beside the market. They are optional when publishing, and are served only to read-scoped keys. |
 | Thesis NFT | Partly. Each version gets a token record with a fingerprint, creator, payout account and fee, on the mock ledger. It is not yet an NEP-171 NFT on NEAR, and the expiry is covered by the fingerprint but is not a field of its own. |
-| Original conditions preserved | Built. A published version cannot be edited. A change is a new version with a new token. |
-| Proof of trade on the NFT | Partly. ConDex keeps a receipt that links the borrower, thesis version, order and first fill, with the source of the evidence. Only the fee payment is written to the mock ledger. There is no closing fill. |
+| Original conditions preserved | Built. The conditions are part of the content hash. A published version cannot be edited, a change is a new version with a new token, and every read re-checks the stored content against the minted hash (`integrity.matches`). |
+| Proof of thesis | Built, against the mock ledger. `GET /v1/tokens/:id/proof` is public and shows the creator, publish time, expiry, fingerprint, fee, mint transaction and whether the thesis is still `preserved`. It never includes the conversation or conditions. |
+| Proof of trade on the NFT | Partly. The same endpoint lists each proof of trade: trader, role, the order, the first fill (time, price, quantity, evidence source), the fee paid and the settlement transaction. Only the fee payment is written to the mock ledger. There is no closing fill. |
 | Verified results | Not built. |
-| Matching | Partly. The link is made before submission and the expiry is checked. Market and direction are not checked. |
+| Matching | Built for the checkable rules. The link is made before submission, and the expiry, market and direction are checked: an order in another market, or a buy against a short thesis (or a sell against a long one), is refused with `market_mismatch` or `direction_mismatch` and reserves no fee. Entry and invalidation stay in the creator's words. A thesis with no direction accepts either side. |
 | Pay per filled trade, to the creator | Built, against the mock ledger. The whole fee goes to the payout account named at publishing. |
 | Creator’s own trades | Not built. A creator cannot link an order to their own thesis. |
 | Creator score | Not built. The creator’s public page shows counts only: theses, reads, paid orders and fees paid. |
