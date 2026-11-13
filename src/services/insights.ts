@@ -33,6 +33,8 @@ export interface PublishInput {
   expiryDate?: string | null;
   /** The time on that day, HH:MM (UTC), when the thesis depends on one. Otherwise it expires at 23:59 UTC. */
   expiryTime?: string | null;
+  /** Instead of a date and time: a full ISO 8601 instant. */
+  expiresAt?: string | null;
   feeNear: string;
   payoutAccount?: string | null;
   messages: Message[];
@@ -144,6 +146,8 @@ export function readInsight(ctx: Ctx, principal: Principal, tokenId: string) {
   return {
     ...detailView(ctx, row),
     messages: JSON.parse(row.messages) as Message[],
+    /** Whether the stored conditions, expiry and messages still hash to the minted fingerprint. */
+    integrity: integrity(row),
     charge: amount(0n),
     your_reads: { count: charges.length, total_charged: amount(total) },
   };
@@ -158,6 +162,59 @@ export function getVersion(ctx: Ctx, tokenId: string): VersionRow {
 /** After the expiry no fee is quoted and no new order is linked. Reading and existing orders are unaffected. */
 export function isExpired(row: VersionRow, at: string = nowIso()): boolean {
   return row.expires_at <= at;
+}
+
+/**
+ * Proof of thesis plus every proof of trade linked to it. Public: it holds what the NFT records on NEAR, and
+ * never the conversation or the creator's entry, invalidation and target, only their fingerprint.
+ */
+export function thesisProof(ctx: Ctx, tokenId: string) {
+  const row = getVersion(ctx, tokenId);
+  const trades = ctx.db.prepare(
+    `SELECT r.id AS receipt_id, r.fee_yocto, r.evidence_source, r.settle_tx, r.created_at AS proven_at,
+            o.id AS order_id, o.market, o.side, o.quantity, o.filled_quantity, o.status, o.created_at AS authorised_at,
+            a.near_account_id AS trader, e.quantity AS fill_quantity, e.price AS fill_price, e.received_at AS fill_at
+       FROM receipts r
+       JOIN orders o ON o.id = r.order_id
+       JOIN accounts a ON a.id = r.borrower_id
+       LEFT JOIN execution_events e ON e.id = r.first_fill_event_id
+      WHERE r.token_id = ? ORDER BY r.created_at, r.rowid`,
+  ).all(tokenId) as unknown as Array<{
+    receipt_id: string; fee_yocto: string; evidence_source: string; settle_tx: string; proven_at: string; order_id: string;
+    market: string; side: "buy" | "sell"; quantity: string; filled_quantity: string; status: string; authorised_at: string;
+    trader: string; fill_quantity: string | null; fill_price: string | null; fill_at: string | null;
+  }>;
+  const creator = accountView(getAccount(ctx, row.creator_id));
+  return {
+    proof_of_thesis: {
+      token_id: row.token_id,
+      insight_id: row.insight_id,
+      version: row.version,
+      creator,
+      published_at: row.created_at,
+      expires_at: row.expires_at,
+      expiry: expiryView(row),
+      content_hash: row.content_hash,
+      /** True while the stored conditions, expiry and conversation still hash to the minted fingerprint. */
+      preserved: integrity(row).matches,
+      usage_fee_per_filled_trade: amount(row.fee_yocto),
+      payout_account: row.payout_account,
+      mint: { ledger: ctx.ledger.kind, tx: row.mint_tx },
+    },
+    proofs_of_trade: trades.map((t) => ({
+      receipt_id: t.receipt_id,
+      thesis: { token_id: row.token_id, content_hash: row.content_hash },
+      trader: t.trader,
+      role: t.trader === creator.near_account_id ? "creator" : "borrower",
+      order: { id: t.order_id, market: t.market, side: t.side, quantity: t.quantity, authorised_at: t.authorised_at, status: t.status },
+      fill: { at: t.fill_at, price: t.fill_price, quantity: t.fill_quantity, source: t.evidence_source },
+      fee_paid: amount(t.fee_yocto),
+      settlement: { ledger: ctx.ledger.kind, tx: t.settle_tx },
+      // Closing fills are not tracked yet, so no result is calculated.
+      closing_fill: null,
+      proven_at: t.proven_at,
+    })),
+  };
 }
 
 // ---- internals ----
@@ -192,33 +249,51 @@ async function prepare(ctx: Ctx, principal: Principal, input: PublishInput): Pro
   const summary = input.summary ?? null;
   const expiry = await resolveExpiry(
     ctx, principal.account.id,
-    { date: input.expiryDate?.trim() || null, time: input.expiryTime?.trim() || null },
+    { date: input.expiryDate?.trim() || null, time: input.expiryTime?.trim() || null, instant: input.expiresAt?.trim() || null },
     { title: input.title, summary, ...conditions, messages: input.messages },
   );
   return { title: input.title, summary, ...conditions, feeYocto, payoutAccount, messages: input.messages, expiry };
 }
 
+/** The stored fields the fingerprint covers. */
+type Fingerprinted = Pick<VersionRow,
+  "token_id" | "insight_id" | "version" | "title" | "summary" | "market" | "direction" | "entry" | "invalidation" |
+  "target" | "expires_at" | "expiry_time_given" | "expiry_set_by" | "expiry_reason" | "messages">;
+
 /**
  * The fingerprint (content_hash) of one thesis version. It covers the conditions, the expiry with who set
- * it and why, and the approved messages. Anyone who reads the thesis can rebuild this object, hash it
- * and compare the result with the token record on the ledger.
+ * it and why, and the approved messages. It is built the same way when publishing and when re-checking a
+ * stored version, and anyone who reads the thesis can rebuild the object, hash it and compare the result
+ * with the token record on the ledger.
  */
-function fingerprint(tokenId: string, insightId: string, version: number, p: Prepared): string {
+function fingerprint(r: Fingerprinted): string {
   return sha256Hex(canonicalJson({
-    token_id: tokenId,
-    insight_id: insightId,
-    version,
-    title: p.title,
-    summary: p.summary,
-    conditions: { market: p.market, direction: p.direction, entry: p.entry, invalidation: p.invalidation, target: p.target },
-    expiry: { expires_at: p.expiry.expiresAt, time_given: p.expiry.timeGiven, set_by: p.expiry.setBy, reason: p.expiry.reason },
-    messages: p.messages,
+    token_id: r.token_id,
+    insight_id: r.insight_id,
+    version: r.version,
+    title: r.title,
+    summary: r.summary,
+    conditions: { market: r.market, direction: r.direction, entry: r.entry, invalidation: r.invalidation, target: r.target },
+    expiry: { expires_at: r.expires_at, time_given: r.expiry_time_given === 1, set_by: r.expiry_set_by, reason: r.expiry_reason },
+    messages: JSON.parse(r.messages) as Message[],
   }));
+}
+
+/** Recomputes the fingerprint from what is stored and compares it with the one minted on the ledger. */
+function integrity(r: VersionRow) {
+  const recomputed = fingerprint(r);
+  return { content_hash: r.content_hash, recomputed_hash: recomputed, matches: recomputed === r.content_hash };
 }
 
 function insertVersion(ctx: Ctx, principal: Principal, insightId: string, version: number, p: Prepared) {
   const tokenId = `${insightId}-v${version}`;
-  const contentHash = fingerprint(tokenId, insightId, version, p);
+  const stored: Fingerprinted = {
+    token_id: tokenId, insight_id: insightId, version, title: p.title, summary: p.summary,
+    market: p.market, direction: p.direction, entry: p.entry, invalidation: p.invalidation, target: p.target,
+    expires_at: p.expiry.expiresAt, expiry_time_given: p.expiry.timeGiven ? 1 : 0, expiry_set_by: p.expiry.setBy,
+    expiry_reason: p.expiry.reason, messages: JSON.stringify(p.messages),
+  };
+  const contentHash = fingerprint(stored);
   const createdAt = nowIso();
   const { tx } = ctx.ledger.mintToken({
     tokenId,
@@ -238,7 +313,7 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
   ).run(
     tokenId, insightId, version, principal.account.id, p.payoutAccount, p.feeYocto.toString(), p.title, p.summary,
     p.market, p.direction, p.entry, p.invalidation, p.target, p.expiry.expiresAt, p.expiry.timeGiven ? 1 : 0,
-    p.expiry.setBy, p.expiry.reason, JSON.stringify(p.messages), contentHash, tx, createdAt,
+    p.expiry.setBy, p.expiry.reason, stored.messages, contentHash, tx, createdAt,
   );
   const row = getVersion(ctx, tokenId);
   // The creator is told when ConDex had to set the expiry, so they can publish a version with their own.
@@ -260,6 +335,8 @@ function expiryView(r: VersionRow) {
     time: r.expires_at.slice(11, 19),
     time_given: r.expiry_time_given === 1,
     set_by: r.expiry_set_by,
+    /** Why ConDex chose it. null when the creator set it. */
+    reason: r.expiry_reason,
   };
 }
 
@@ -274,6 +351,7 @@ function previewView(ctx: Ctx, r: VersionRow) {
     market: r.market,
     direction: r.direction,
     summary: r.summary,
+    published_at: r.created_at,
     expires_at: r.expires_at,
     expired: isExpired(r),
     expiry: expiryView(r),
@@ -288,11 +366,10 @@ function previewView(ctx: Ctx, r: VersionRow) {
   };
 }
 
-/** For the creator and connected readers: the preview plus the full conditions and why the expiry was set. */
+/** For the creator and connected readers: the preview plus the full conditions. */
 function detailView(ctx: Ctx, r: VersionRow) {
   return {
     ...previewView(ctx, r),
     conditions: { market: r.market, direction: r.direction, entry: r.entry, invalidation: r.invalidation, target: r.target },
-    expiry: { ...expiryView(r), reason: r.expiry_reason },
   };
 }

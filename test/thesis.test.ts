@@ -82,6 +82,8 @@ describe("thesis conditions", () => {
     }));
     assert.equal(rebuilt, read.content_hash);
     assert.equal((await mintOf(srv, s.tokenId)).args.content_hash, rebuilt, "and it is the fingerprint on the ledger");
+    // The server makes the same check on every read.
+    assert.deepEqual(read.integrity, { content_hash: rebuilt, recomputed_hash: rebuilt, matches: true });
   });
 
   test("a published version keeps its conditions and expiry when a new version changes them", async () => {
@@ -116,6 +118,12 @@ describe("expiry", () => {
     assert.equal(timed.expiry.time_given, true);
     assert.equal((await publish({ ...ETH_THESIS, expiry_date: day, expiry_time: "13:30:45" })).body.expires_at, `${day}T13:30:45.000Z`);
 
+    // A full ISO instant is accepted in place of a date and time.
+    const instant = (await publish({ ...UNDATED, expires_at: `${day}T09:15:00Z` })).body;
+    assert.equal(instant.expires_at, `${day}T09:15:00.000Z`);
+    assert.equal(instant.expiry.set_by, "creator");
+    assert.equal(instant.expiry.time_given, true);
+
     // The token record on the ledger carries the publish time, the expiry and who set it.
     const mint = await mintOf(srv, timed.token_id);
     assert.equal(mint.args.issued_at, timed.created_at);
@@ -133,6 +141,9 @@ describe("expiry", () => {
       [{ expiry_date: futureDate(3), expiry_time: "25:00" }, /HH:MM/],
       [{ expiry_date: futureDate(3), expiry_time: "1pm" }, /HH:MM/],
       [{ expiry_date: undefined, expiry_time: "13:30" }, /needs an expiry_date/],
+      [{ expiry_date: undefined, expires_at: "2020-01-01T00:00:00Z" }, /already passed/],
+      [{ expiry_date: undefined, expires_at: "next friday" }, /ISO 8601/],
+      [{ expires_at: `${nextYear}-01-01T00:00:00Z` }, /not both/],
     ];
     for (const [change, message] of refused) {
       const r = await publish({ ...ETH_THESIS, ...change });
@@ -140,10 +151,6 @@ describe("expiry", () => {
       assert.equal(r.body.error.code, "invalid_expiry");
       assert.match(r.body.error.message, message);
     }
-    // The field this replaced is refused with a pointer to the new ones, not silently ignored.
-    const old = await publish({ ...UNDATED, expires_at: "2030-01-01T00:00:00Z" });
-    assert.equal(old.status, 400);
-    assert.match(old.body.error.message, /expires_at: is no longer accepted. Send expiry_date/);
     assert.equal((await api("GET", "/v1/tokens")).body.tokens.length, 1, "nothing was published by the refused requests");
   });
 
@@ -159,10 +166,10 @@ describe("expiry", () => {
     assert.match(r.body.expiry.reason, /AI evaluation is not switched on.*default: the end of the day 7 days after publishing/);
     assert.match(r.body.notice, /No expiry date was given, so ConDex set it to \d{4}-\d{2}-\d{2} 23:59 UTC/);
 
-    // Everyone can see that ConDex set it. Why is part of the thesis, for connected readers.
+    // Everyone can see that ConDex set it, and why: both are part of the proof of thesis.
     const preview = (await api("GET", `/v1/tokens/${r.body.token_id}/preview`)).body;
     assert.equal(preview.expiry.set_by, "condex_default");
-    assert.equal(preview.expiry.reason, undefined);
+    assert.equal(preview.expiry.reason, r.body.expiry.reason);
     assert.equal((await api("GET", `/v1/tokens/${r.body.token_id}`, { key: s.bobRead })).body.expiry.reason, r.body.expiry.reason);
     assert.equal((await mintOf(srv, r.body.token_id)).args.expiry_set_by, "condex_default");
     assert.equal((await api("GET", "/health")).body.expiry_ai, false);
@@ -172,7 +179,9 @@ describe("expiry", () => {
 describe("ConDex's AI sets a missing expiry", () => {
   const seen: ThesisForExpiry[] = [];
   let answer: () => Promise<ExpiryEvaluation>;
-  const standIn: ExpiryEvaluator = { evaluate: async (thesis) => { seen.push(thesis); return answer(); } };
+  const standIn: ExpiryEvaluator = { model: "stand-in", evaluate: async (thesis) => { seen.push(thesis); return answer(); } };
+  /** An answer naming a day with no time: the thesis expires at the end of it. */
+  const endOf = (day: string, reason: string): ExpiryEvaluation => ({ expiresAt: `${day}T23:59:59.000Z`, timeGiven: false, reason });
   let ai: Server;
   let k: Keys;
   before(async () => { ai = await startServer({ expiryAi: standIn }); });
@@ -187,7 +196,9 @@ describe("ConDex's AI sets a missing expiry", () => {
 
   test("it reads the thesis, and its answer is recorded with the reason", async () => {
     const day = futureDate(2);
-    answer = async () => ({ date: day, time: "13:30", reason: "The thesis says to walk away\n if neither happens by the US open." });
+    answer = async () => ({
+      expiresAt: `${day}T13:30:00.000Z`, timeGiven: true, reason: "The thesis says to walk away\n if neither happens by the US open.",
+    });
     const r = await publishUndated();
     assert.equal(r.status, 201);
     assert.equal(r.body.expires_at, `${day}T13:30:00.000Z`);
@@ -210,7 +221,7 @@ describe("ConDex's AI sets a missing expiry", () => {
 
   test("an answer without a time expires at the end of that day", async () => {
     const day = futureDate(10);
-    answer = async () => ({ date: day, time: null, reason: "A multi-day swing with no stated deadline." });
+    answer = async () => endOf(day, "A multi-day swing with no stated deadline.");
     const r = await publishUndated();
     assert.equal(r.body.expires_at, `${day}T23:59:59.000Z`);
     assert.equal(r.body.expiry.time_given, false);
@@ -221,9 +232,9 @@ describe("ConDex's AI sets a missing expiry", () => {
     const warn = t.mock.method(console, "warn", () => {});
     const failures: Array<() => Promise<ExpiryEvaluation>> = [
       async () => { throw new Error("the Anthropic API could not be reached"); },
-      async () => ({ date: "2020-01-01", time: null, reason: "Already over." }),
-      async () => ({ date: "soon", time: null, reason: "No idea." }),
-      async () => ({ date: futureDate(2), time: "noon", reason: "By midday." }),
+      async () => endOf("2020-01-01", "Already over."),
+      async () => ({ expiresAt: "soon", timeGiven: false, reason: "No idea." }),
+      async () => endOf(futureDate(45), "A long-term view."), // further out than the AI may set
     ];
     for (const failing of failures) {
       answer = failing;
@@ -236,7 +247,7 @@ describe("ConDex's AI sets a missing expiry", () => {
   });
 
   test("it is not asked for callers who may not publish, or for requests that are refused anyway", async () => {
-    answer = async () => ({ date: futureDate(2), time: null, reason: "x" });
+    answer = async () => endOf(futureDate(2), "x");
     assert.equal((await publishUndated(k.bobRead)).status, 403);
     assert.equal((await ai.api("POST", "/v1/insights", { key: k.alicePublish, body: { ...UNDATED, entry: undefined } })).status, 400);
     assert.equal((await ai.api("POST", "/v1/insights", { key: k.alicePublish, body: { ...UNDATED, fee_near: "abc" } })).status, 400);
@@ -248,7 +259,7 @@ describe("ConDex's AI sets a missing expiry", () => {
   });
 
   test("each account gets a limited number of AI evaluations an hour, then the default", async () => {
-    answer = async () => ({ date: futureDate(2), time: null, reason: "Intraday setup." });
+    answer = async () => endOf(futureDate(2), "Intraday setup.");
     for (let i = 0; i < AI_EVALUATIONS_PER_HOUR; i++) {
       assert.equal((await publishUndated()).body.expiry.set_by, "condex_ai");
     }
@@ -289,8 +300,10 @@ describe("the Claude expiry evaluator", () => {
     const { client, calls } = standInClient({
       stop_reason: "end_turn", parsed_output: { expiry_date: "2026-11-13", expiry_time: " 14:30 ", reason: "By the US open." },
     });
-    assert.deepEqual(await new ClaudeExpiryEvaluator(client).evaluate(thesis), {
-      date: "2026-11-13", time: "14:30", reason: "By the US open.",
+    const evaluator = new ClaudeExpiryEvaluator(client);
+    assert.equal(evaluator.model, EXPIRY_MODEL);
+    assert.deepEqual(await evaluator.evaluate(thesis), {
+      expiresAt: "2026-11-13T14:30:00.000Z", timeGiven: true, reason: "By the US open.",
     });
     assert.equal(calls.length, 1);
     const { params, options } = calls[0]!;
@@ -314,7 +327,9 @@ describe("the Claude expiry evaluator", () => {
     const { client } = standInClient({
       stop_reason: "end_turn", parsed_output: { expiry_date: "2026-11-20", expiry_time: "", reason: "A week-long swing." },
     });
-    assert.equal((await new ClaudeExpiryEvaluator(client).evaluate(thesis)).time, null);
+    const out = await new ClaudeExpiryEvaluator(client).evaluate(thesis);
+    assert.equal(out.expiresAt, "2026-11-20T23:59:59.000Z", "it expires at the end of that day");
+    assert.equal(out.timeGiven, false);
   });
 
   test("a declined, unreadable or failed answer is an error, so the caller applies the default", async () => {
@@ -322,6 +337,8 @@ describe("the Claude expiry evaluator", () => {
     await assert.rejects(evaluate({ stop_reason: "refusal", parsed_output: null }), /declined to evaluate/);
     await assert.rejects(evaluate({ stop_reason: "max_tokens", parsed_output: null }), /could not be read \(stop reason: max_tokens\)/);
     await assert.rejects(evaluate(new Error("socket hang up")), /socket hang up/);
+    const unusable = { stop_reason: "end_turn", parsed_output: { expiry_date: "next week", expiry_time: "", reason: "Soon." } };
+    await assert.rejects(evaluate(unusable), /unusable date or time/);
   });
 });
 

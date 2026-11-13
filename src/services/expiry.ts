@@ -5,16 +5,26 @@ import { badRequest } from "../errors.ts";
 export type ExpirySetBy = "creator" | "condex_ai" | "condex_default";
 
 export interface ResolvedExpiry {
-  /** ISO 8601, UTC. */
+  /** ISO 8601, UTC: the last moment a trade can be linked to the thesis. */
   expiresAt: string;
-  /** false when only a date was set: the thesis then expires at the end of that day. */
+  /** false when only a day was set: the thesis then expires at the end of that day. */
   timeGiven: boolean;
   setBy: ExpirySetBy;
   /** Why ConDex chose this expiry. null when the creator set it. */
   reason: string | null;
 }
 
-/** The thesis as it is about to be published: what an evaluator reads to choose an expiry. */
+/** The expiry as the creator may give it. All null means ConDex sets it. */
+export interface ExpiryInput {
+  /** A UTC calendar day, "YYYY-MM-DD". */
+  date: string | null;
+  /** Time on that day in UTC, "HH:MM". Without it the thesis expires at the end of the day. */
+  time: string | null;
+  /** Instead of a date and time: a full ISO 8601 instant. */
+  instant: string | null;
+}
+
+/** The thesis as it is about to be published: what ConDex's AI reads to choose an expiry. */
 export interface ThesisForExpiry {
   title: string;
   market: string;
@@ -27,22 +37,27 @@ export interface ThesisForExpiry {
   now: Date;
 }
 
+/** What ConDex's AI answers. */
 export interface ExpiryEvaluation {
-  /** YYYY-MM-DD, UTC. */
-  date: string;
-  /** HH:MM or HH:MM:SS, UTC. null when the thesis does not depend on a time of day. */
-  time: string | null;
-  /** Shown to the creator and to everyone who reads the thesis. */
+  /** ISO 8601 instant, UTC. */
+  expiresAt: string;
+  /** false when it chose a day without a time, so the thesis expires at the end of that day. */
+  timeGiven: boolean;
+  /** One or two sentences. Recorded in the proof of thesis, so anyone can read it. */
   reason: string;
 }
 
-/** Chooses the expiry of a thesis whose creator gave none. */
+/** ConDex's AI: reads a thesis whose creator gave no expiry and chooses one. */
 export interface ExpiryEvaluator {
+  /** The model that answers, shown at startup. */
+  readonly model: string;
   evaluate(thesis: ThesisForExpiry): Promise<ExpiryEvaluation>;
 }
 
 /** Applied when the creator gave no expiry and ConDex's AI did not set one. */
 export const DEFAULT_EXPIRY_DAYS = 7;
+/** The AI may not set an expiry further out than this, so a vague thesis cannot stay open indefinitely. */
+export const MAX_AI_EXPIRY_DAYS = 30;
 /** Each AI evaluation is a paid model call, so an account gets this many an hour before the default applies. */
 export const AI_EVALUATIONS_PER_HOUR = 20;
 /** A longer conversation gets the default, rather than being cut down to fit. */
@@ -72,27 +87,48 @@ export function expiryInstant(date: string, time: string | null): Date {
 }
 
 /**
- * Every thesis version has an expiry. The creator's date (and optional time) is used when given.
- * Otherwise ConDex sets it: its AI reads the thesis, and when the AI is off or fails, a fixed default
- * applies. Either way the result records who set it and why.
+ * The creator's own expiry, if they gave one: a date with an optional UTC time, or a full instant.
+ * null when they gave none, so ConDex sets it. Throws when what they gave is unusable.
+ */
+export function creatorExpiry(given: ExpiryInput, now = new Date()): { expiresAt: string; timeGiven: boolean } | null {
+  let at: Date;
+  let timeGiven = true;
+  if (given.date !== null) {
+    if (given.instant !== null) {
+      throw badRequest("invalid_expiry", "Send expiry_date (with an optional expiry_time) or expires_at, not both");
+    }
+    at = expiryInstant(given.date, given.time);
+    timeGiven = given.time !== null;
+  } else if (given.time !== null) {
+    throw badRequest("invalid_expiry", "expiry_time needs an expiry_date. Send both, or neither to let ConDex set the expiry");
+  } else if (given.instant !== null) {
+    at = new Date(given.instant);
+    if (Number.isNaN(at.getTime())) {
+      throw badRequest("invalid_expiry", 'expires_at must be an ISO 8601 date-time like "2026-12-31T13:30:00Z", or send expiry_date (YYYY-MM-DD) instead');
+    }
+  } else {
+    return null;
+  }
+  if (at.getTime() <= now.getTime()) {
+    throw badRequest("invalid_expiry", `The expiry must be in the future, and ${at.toISOString()} has already passed`);
+  }
+  return { expiresAt: at.toISOString(), timeGiven };
+}
+
+/**
+ * Every thesis version has an expiry. The creator's own is used when given. Otherwise ConDex sets it:
+ * its AI reads the thesis, and when the AI is off or gives no usable answer, a fixed default applies.
+ * Either way the result records who set it and why, so nothing is ever published without an expiry.
  */
 export async function resolveExpiry(
   ctx: Ctx,
   accountId: string,
-  given: { date: string | null; time: string | null },
+  given: ExpiryInput,
   thesis: Omit<ThesisForExpiry, "now">,
 ): Promise<ResolvedExpiry> {
   const now = new Date();
-  if (given.date !== null) {
-    const at = expiryInstant(given.date, given.time);
-    if (at.getTime() <= now.getTime()) {
-      throw badRequest("invalid_expiry", `The expiry must be in the future, and ${at.toISOString()} has already passed`);
-    }
-    return { expiresAt: at.toISOString(), timeGiven: given.time !== null, setBy: "creator", reason: null };
-  }
-  if (given.time !== null) {
-    throw badRequest("invalid_expiry", "expiry_time needs an expiry_date. Send both, or neither to let ConDex set the expiry");
-  }
+  const own = creatorExpiry(given, now);
+  if (own) return { ...own, setBy: "creator", reason: null };
 
   if (!ctx.expiryAi) return defaultExpiry(now, "ConDex's AI evaluation is not switched on for this server");
   const size = thesis.messages.reduce((sum, m) => sum + m.content.length, 0);
@@ -102,12 +138,9 @@ export async function resolveExpiry(
   }
   try {
     const answer = await ctx.expiryAi.evaluate({ ...thesis, now });
-    const at = expiryInstant(answer.date, answer.time);
-    // The evaluation took time, so compare with the clock as it is now.
-    if (at.getTime() <= Date.now()) throw new Error(`it chose ${at.toISOString()}, which has already passed`);
     return {
-      expiresAt: at.toISOString(),
-      timeGiven: answer.time !== null,
+      expiresAt: usableInstant(answer.expiresAt, now),
+      timeGiven: answer.timeGiven,
       setBy: "condex_ai",
       reason: tidy(answer.reason) || "ConDex's AI set this expiry from the timeframe of the thesis.",
     };
@@ -115,6 +148,18 @@ export async function resolveExpiry(
     console.warn(`Expiry AI failed, so the default expiry was applied: ${err instanceof Error ? err.message : String(err)}`);
     return defaultExpiry(now, "ConDex's AI could not evaluate the thesis this time");
   }
+}
+
+/** The AI's answer must be a real moment, still ahead, and no further out than the limit. */
+function usableInstant(answer: string, asked: Date): string {
+  const at = Date.parse(answer);
+  if (Number.isNaN(at)) throw new Error("it gave an expiry that is not a date");
+  // The evaluation took time, so compare with the clock as it is now.
+  if (at <= Date.now()) throw new Error(`it chose ${new Date(at).toISOString()}, which has already passed`);
+  if (at > asked.getTime() + MAX_AI_EXPIRY_DAYS * DAY_MS) {
+    throw new Error(`it chose an expiry more than ${MAX_AI_EXPIRY_DAYS} days away`);
+  }
+  return new Date(at).toISOString();
 }
 
 function defaultExpiry(now: Date, why: string): ResolvedExpiry {

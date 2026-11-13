@@ -48,22 +48,14 @@ export const publishBody = z.object({
   invalidation: condition(500, "what would prove the idea wrong, in the creator's words"),
   target: z.string().trim().max(500).nullable().optional(),
   summary: z.string().max(1000).nullable().optional(),
-  // Expiry, in UTC. Without a date, ConDex sets the expiry and says so in the response.
+  // Expiry, in UTC: expiry_date with an optional expiry_time, or a full ISO expires_at instead.
+  // With none of them, ConDex sets the expiry and says so in the response.
   expiry_date: z.string().trim().max(40).nullable().optional(),
   expiry_time: z.string().trim().max(40).nullable().optional(),
-  // Replaced by the two fields above. Named here so a client that still sends it is told, not ignored.
-  expires_at: z.unknown().optional(),
+  expires_at: z.string().trim().max(40).nullable().optional(),
   fee_near: nearAmount,
   payout_account: z.string().nullable().optional(),
   messages: z.array(messageSchema).min(1).max(200),
-}).superRefine((body, ctx) => {
-  if (body.expires_at !== undefined && body.expires_at !== null) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["expires_at"],
-      message: "is no longer accepted. Send expiry_date (YYYY-MM-DD) and, if the thesis depends on a time, expiry_time (HH:MM, UTC)",
-    });
-  }
 });
 
 export const depositBody = z.object({ amount_near: nearAmount });

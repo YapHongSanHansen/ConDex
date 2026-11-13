@@ -17,8 +17,8 @@ app.listen(config.port, config.host, () => {
   console.log(`  ledger: ${ctx.ledger.kind}   venue: ${ctx.venue.name}   wallet key check: ${ctx.accessKeys.mode}`);
   console.log(`  storage: ${storage}`);
   console.log(`  thesis without an expiry: ${ctx.expiryAi
-    ? "ConDex's AI sets it (Claude)"
-    : "ConDex's default, 7 days (set ANTHROPIC_API_KEY to have ConDex's AI read the thesis instead)"}`);
+    ? `ConDex's AI sets it (${ctx.expiryAi.model})`
+    : "ConDex's default, 7 days (set CONDEX_LLM_API_KEY or ANTHROPIC_API_KEY to have ConDex's AI read the thesis instead)"}`);
   if (config.devMode) {
     console.log(`  test page: http://localhost:${config.port}/test`);
     console.log(`  one-click near-cli connect: ${ctx.nearCli instanceof NearCliSigner

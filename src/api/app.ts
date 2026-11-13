@@ -6,6 +6,7 @@ import type { Ctx } from "../context.ts";
 import { type Db, openDb, wipeDb } from "../db.ts";
 import { ApiError, badRequest, forbidden, notFound, unauthorized } from "../errors.ts";
 import { ClaudeExpiryEvaluator } from "../ai/claudeExpiry.ts";
+import { LlmExpiryEvaluator } from "../ai/llmExpiry.ts";
 import { type ExecutionVenue, SimulatedVenue } from "../execution/venue.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import { MockLedger } from "../ledger/mockLedger.ts";
@@ -18,7 +19,9 @@ import {
 } from "../services/accounts.ts";
 import { createChallenge, signOut, verifySignIn } from "../services/auth.ts";
 import type { ExpiryEvaluator } from "../services/expiry.ts";
-import { getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight } from "../services/insights.ts";
+import {
+  getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight, thesisProof,
+} from "../services/insights.ts";
 import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
 import { amount, parseNear } from "../util.ts";
@@ -42,8 +45,14 @@ export interface AppDeps {
   accessKeys?: AccessKeyChecker;
   /** Signer for one-click near-cli sign-in. Defaults to near-cli-rs if found (dev mode only); null disables it. */
   nearCli?: MessageSigner | null;
-  /** Sets the expiry of a thesis published without one. Defaults to Claude when config.expiryAi says so; null turns it off. */
+  /** ConDex's AI, which sets the expiry of a thesis published without one. Defaults to the configured model; null turns it off. */
   expiryAi?: ExpiryEvaluator | null;
+}
+
+function configuredExpiryAi(config: Config): ExpiryEvaluator | null {
+  if (config.expiryAi === "llm" && config.llm) return new LlmExpiryEvaluator(config.llm);
+  if (config.expiryAi === "claude") return new ClaudeExpiryEvaluator();
+  return null;
 }
 
 export function createApp(config: Config, deps: AppDeps = {}) {
@@ -57,7 +66,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     accessKeys: deps.accessKeys
       ?? (config.walletKeyCheck === "none" ? new NoAccessKeyCheck() : new RpcAccessKeyChecker(config.nearRpcUrl)),
     mcp: new Map(),
-    expiryAi: deps.expiryAi !== undefined ? deps.expiryAi : config.expiryAi === "claude" ? new ClaudeExpiryEvaluator() : null,
+    expiryAi: deps.expiryAi !== undefined ? deps.expiryAi : configuredExpiryAi(config),
     expiryAiUse: new Map(),
     nearCli: !config.devMode ? null : deps.nearCli !== undefined ? deps.nearCli : nearCliBinary ? new NearCliSigner(nearCliBinary) : null,
   };
@@ -251,6 +260,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     // An empty string (an empty form field) means "not given".
     expiryDate: body.expiry_date || null,
     expiryTime: body.expiry_time || null,
+    expiresAt: body.expires_at || null,
     feeNear: body.fee_near,
     payoutAccount: body.payout_account ?? null,
     messages: body.messages,
@@ -279,6 +289,11 @@ export function createApp(config: Config, deps: AppDeps = {}) {
 
   app.get("/v1/tokens/:tokenId/preview", (req, res) => {
     res.json(getPreview(ctx, req.params.tokenId!));
+  });
+
+  // Proof of thesis and every proof of trade linked to it. Public, and never includes the conversation.
+  app.get("/v1/tokens/:tokenId/proof", (req, res) => {
+    res.json(thesisProof(ctx, req.params.tokenId!));
   });
 
   // Full conversation: needs a read-scoped key. Always free.

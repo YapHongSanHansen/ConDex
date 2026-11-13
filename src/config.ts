@@ -37,10 +37,22 @@ export interface Config {
   /** Number of reverse proxies in front of the server, so client addresses come from X-Forwarded-For. */
   trustProxyHops: number;
   /**
-   * Who sets the expiry of a thesis published without one. "claude": ConDex's AI reads the thesis
-   * (needs Anthropic credentials, e.g. ANTHROPIC_API_KEY). "off": only ConDex's default is applied.
+   * ConDex's AI, which sets the expiry of a thesis published without one.
+   * "llm": the OpenAI-compatible model in `llm`. "claude": Claude (needs Anthropic credentials, e.g.
+   * ANTHROPIC_API_KEY). "off": no AI, so ConDex's default expiry is applied.
    */
-  expiryAi: "claude" | "off";
+  expiryAi: "llm" | "claude" | "off";
+  /** The OpenAI-compatible reasoning model. null when CONDEX_LLM_API_KEY is not set. */
+  llm: LlmConfig | null;
+}
+
+/** An OpenAI-compatible chat completions endpoint. */
+export interface LlmConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  reasoningEffort: "low" | "medium" | "high";
+  timeoutMs: number;
 }
 
 const DEV_EXECUTION_SECRET = "dev-execution-secret";
@@ -78,6 +90,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error("Set CONDEX_AUTH_RECIPIENT to your website's domain (for example condex.app) when CONDEX_DEV_MODE=false");
   }
 
+  // ConDex's AI: the OpenAI-compatible model when it has a key, else Claude when Anthropic has one.
+  const llm = loadLlm(env);
+  const hasAnthropicKey = !!(env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim());
+  const expiryAi = parseChoice(env, "CONDEX_EXPIRY_AI", ["llm", "claude", "off"] as const, llm ? "llm" : hasAnthropicKey ? "claude" : "off");
+  if (expiryAi === "llm" && !llm) throw new Error("CONDEX_EXPIRY_AI=llm needs CONDEX_LLM_API_KEY");
+
   return {
     port,
     host: env.CONDEX_HOST?.trim() || (devMode ? "127.0.0.1" : "0.0.0.0"),
@@ -95,9 +113,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionTtlSeconds: parseInteger(env, "CONDEX_SESSION_TTL_SECONDS", 60 * 60 * 24),
     signInsPerMinute: parseInteger(env, "CONDEX_SIGNINS_PER_MINUTE", 60),
     trustProxyHops: parseInteger(env, "CONDEX_TRUST_PROXY", 0, 0),
-    // On when an Anthropic credential is in the environment, unless the setting says otherwise.
-    expiryAi: parseChoice(env, "CONDEX_EXPIRY_AI", ["claude", "off"] as const,
-      env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim() ? "claude" : "off"),
+    expiryAi,
+    llm,
+  };
+}
+
+function loadLlm(env: NodeJS.ProcessEnv): LlmConfig | null {
+  const apiKey = env.CONDEX_LLM_API_KEY?.trim();
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    baseUrl: (env.CONDEX_LLM_BASE_URL?.trim() || "https://llm.grafilab.ai/v1").replace(/\/+$/, ""),
+    model: env.CONDEX_LLM_MODEL?.trim() || "qwen/qwen3.7-flash",
+    reasoningEffort: parseChoice(env, "CONDEX_LLM_REASONING_EFFORT", ["low", "medium", "high"] as const, "low"),
+    timeoutMs: parseInteger(env, "CONDEX_LLM_TIMEOUT_SECONDS", 60) * 1000,
   };
 }
 

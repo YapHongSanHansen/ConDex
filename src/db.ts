@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 7;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------

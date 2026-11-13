@@ -4,7 +4,7 @@
 
 Other agents can use the token ID to read the thesis for free. A borrower pays a usage fee only when a trade they linked to that NFT receives a confirmed fill, and the fee goes to the creator. Each filled trade is recorded on the NFT as a proof of trade, and the creator’s score is calculated from those proofs alone.
 
-> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing, free reading and paying the creator per filled trade work today. Required expiry, recorded thesis conditions, trade matching, verified results, the creator score, the NEAR testnet contract and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
+> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing with conditions and an expiry, free reading, matching a trade to its thesis, a public proof of thesis and trade, and paying the creator per filled trade work today. Verified results, the creator score, the NEAR testnet contract and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
 
 ## The problem
 
@@ -167,13 +167,14 @@ The API and code call a thesis an *insight*, and its fingerprint a `content_hash
 
 | Rule | In the prototype today |
 | --- | --- |
-| Expiry date required, with a reminder | Built. Every version has an expiry: the creator’s date and optional time, or one that ConDex sets. The MCP publish tool tells the creator’s agent to ask for it, and the publish response says when ConDex had to set it. |
-| ConDex’s AI sets a missing expiry | Built, and off until the server has an Anthropic API key (`ANTHROPIC_API_KEY`). With one, Claude reads the thesis and sets the expiry, and its reason is recorded. Without one, or when the AI fails, ConDex applies a default of 7 days and records that instead. The Claude call is covered by tests with a stand-in for the API. It has not been run against the live API yet. |
+| Expiry date required, with a reminder | Built. Every version has an expiry: the creator’s `expiry_date` and optional `expiry_time` (or a full ISO `expires_at`), or one that ConDex sets. A past or malformed expiry is refused. The MCP publish tool tells the creator’s agent to ask for the date and time, and the publish response says when ConDex had to set it. |
+| ConDex’s AI sets a missing expiry | Built, and off until the server has a key for a model. With `CONDEX_LLM_API_KEY`, an OpenAI-compatible reasoning model (Qwen on Grafilab by default) reads the thesis; with `ANTHROPIC_API_KEY`, Claude does. The AI takes the expiry from the deadline or event the thesis describes, at most 30 days out. The proof of thesis says `set_by: "condex_ai"` with the reason, and both are part of the content hash. With no model, or no usable answer, ConDex applies a default of 7 days and records `set_by: "condex_default"`, so nothing is published without an expiry. Both models are tested against stand-ins. The Claude path has not been run against the live API yet. |
 | Expiry stops new trades | Built. After the expiry, fee quotes and linked orders are refused, and reading still works. |
 | Thesis conditions as fields | Built. Market, direction, entry and invalidation are required fields, and the target is optional. The market and direction are public. The entry, invalidation and target are served with the conversation. |
 | Thesis NFT | Partly. Each version gets a token record on the mock ledger with a fingerprint, creator, payout account, fee, publish time, expiry and who set the expiry. It is not yet an NEP-171 NFT on NEAR. |
-| Original conditions preserved | Built. A published version cannot be edited. Its fingerprint covers the conditions and the expiry, and a reader can recompute it. A change is a new version with a new token. |
-| Proof of trade on the NFT | Partly. ConDex keeps a receipt that links the borrower, thesis version, order and first fill, with the source of the evidence. Only the fee payment is written to the mock ledger. There is no closing fill. |
+| Original conditions preserved | Built. A published version cannot be edited. Its fingerprint covers the conditions and the expiry, a reader can recompute it, and every read re-checks the stored content against the minted hash (`integrity.matches`). A change is a new version with a new token. |
+| Proof of thesis | Built, against the mock ledger. `GET /v1/tokens/:id/proof` is public and shows the creator, publish time, expiry and who set it, fingerprint, fee, mint transaction and whether the thesis is still `preserved`. It never includes the conversation or the creator’s entry, invalidation and target. |
+| Proof of trade on the NFT | Partly. The same endpoint lists each proof of trade: trader, role, the order, the first fill (time, price, quantity, evidence source), the fee paid and the settlement transaction. Only the fee payment is written to the mock ledger. There is no closing fill. |
 | Verified results | Not built. |
 | Matching | Built for checks 1 to 4. An order in another market, against the thesis’s direction or after the expiry is refused before any fee is reserved, and each linked order records what was checked. Check 5 uses the simulated venue or the execution endpoint. |
 | Pay per filled trade, to the creator | Built, against the mock ledger. The whole fee goes to the payout account named at publishing. |
@@ -192,6 +193,8 @@ npm test             # API flow tests and MCP tests
 npm run test:page    # opens the test console in headless Chrome/Edge and checks every button
 npm run typecheck
 ```
+
+`npm start` and `npm run dev` read a git-ignored `.env` file if there is one, for settings such as `CONDEX_LLM_API_KEY`.
 
 **Data lives in memory.** Nothing is written to disk, and everything (sign-ins, API keys, published insights, orders, mock balances) starts empty whenever the server restarts, including each automatic restart of `npm run dev`. After a restart, reconnect your wallet (one click) and create a new MCP key; the test console notices the ended session and says so, and **Run every button** sets the test data up again. To keep data between restarts instead, set `CONDEX_DB_PATH=data/condex.db` (a local SQLite file, built into Node).
 
@@ -218,7 +221,7 @@ Dev mode is for your own machine, so it is locked to it:
 
 | | No wallet | Wallet connected |
 | --- | --- | --- |
-| Publisher pages (`GET /v1/publishers/:account`), insight list and previews | ✅ | ✅ |
+| Publisher pages (`GET /v1/publishers/:account`), insight list and previews, proof of thesis and trade (`GET /v1/tokens/:id/proof`) | ✅ | ✅ |
 | Ledger explorer (`/v1/ledger/*`): the same data that will be public on NEAR | ✅ | ✅ |
 | Read conversations, publish, trade, deposit | 401 | ✅ with the session or an API key it issued |
 | Receipts | 401 | ✅ the borrower's and creator's own |
@@ -247,10 +250,13 @@ API keys (`cdx_…`) issued from a session keep working after sign-out until the
 | `target` | Optional. When to take profit or close. |
 | `expiry_date` | `YYYY-MM-DD`, in UTC. Leave it out and ConDex sets the expiry. |
 | `expiry_time` | Optional `HH:MM`, in UTC. Without it the thesis expires at 23:59:59 UTC on the expiry date. |
+| `expires_at` | Instead of the two fields above: a full ISO date-time such as `2026-12-31T13:30:00Z`. |
 | `fee_near`, `payout_account` | The fee per filled order, and the account that receives it (the creator's by default). |
 | `messages` | The approved messages. |
 
 In the response, `expires_at` is the expiry and `expiry.set_by` says who set it: `creator`, `condex_ai` or `condex_default`. When ConDex set it, `expiry.reason` says why and `notice` is a sentence to pass on to the creator. Conditions and expiry are fixed once published; changing them means publishing a version.
+
+Reading a thesis (`GET /v1/tokens/:tokenId`) also returns `integrity`: whether the stored conditions, expiry and messages still hash to the minted fingerprint. `GET /v1/tokens/:tokenId/proof` is public and needs no wallet: it returns the proof of thesis, and a proof of trade for each linked order that got a confirmed fill.
 
 `POST /v1/orders` links an order to a thesis only when it matches. A mismatch is refused with HTTP 409 before any fee is reserved, and the quote can be used again:
 
@@ -283,7 +289,7 @@ The MCP tools have exactly the scopes of that key: `publish`, `read` and/or `tra
 | `src/services/auth.ts`, `src/near/` | Wallet sign-in: NEP-413 challenge and verification, on-chain access-key check, sessions. |
 | `src/services/accounts.ts` | Authentication and API keys scoped to `publish`, `read` and `trade`. Keys and sessions are stored hashed. |
 | `src/services/insights.ts` | Publishing versions with their conditions, content hashing, minting, public previews and free reads. |
-| `src/services/expiry.ts`, `src/ai/claudeExpiry.ts` | The expiry of a version: the creator’s date and time, or ConDex’s AI (one Claude call), or ConDex’s default. |
+| `src/services/expiry.ts`, `src/ai/` | The expiry of a version: the creator’s own, or ConDex’s AI (`llmExpiry.ts` for an OpenAI-compatible model, `claudeExpiry.ts` for Claude), or ConDex’s default. |
 | `src/services/orders.ts` | Fee quotes, matching an order to its thesis, fee reservation and order submission. |
 | `src/services/settlement.ts` | Execution events → one payout on the first fill, release on no-fill endings, idempotent replays. |
 | `src/ledger/` | `Ledger` interface and `MockLedger`. A NEAR testnet adapter replaces the mock. |
@@ -312,14 +318,19 @@ Invalid values (a misspelt network, `CONDEX_DEV_MODE=yes`, a timeout of `5m`) st
 | `CONDEX_SIGNINS_PER_MINUTE` | `60` | New sign-in challenges per client address per minute. |
 | `CONDEX_TRUST_PROXY` | `0` | Number of reverse proxies in front of the server, so the client address (for sign-in limits) comes from `X-Forwarded-For`. |
 | `CONDEX_QUOTE_TTL_SECONDS` | `300` | How long a fee quote stays valid. |
-| `ANTHROPIC_API_KEY` | not set | Lets ConDex’s AI (Claude) set the expiry of a thesis published without one. Each such publish is one model call, and an account gets at most 20 an hour. |
-| `CONDEX_EXPIRY_AI` | `claude` when an Anthropic key is set, otherwise `off` | `claude` or `off`. With `off`, a thesis published without an expiry always gets ConDex’s default: 7 days after publishing. |
+| `CONDEX_LLM_API_KEY` | none | Key for the OpenAI-compatible reasoning model that sets a missing expiry. Put it in a git-ignored `.env` file (`npm start` and `npm run dev` read it), never in the code. |
+| `CONDEX_LLM_BASE_URL` | `https://llm.grafilab.ai/v1` | Any OpenAI-compatible endpoint. |
+| `CONDEX_LLM_MODEL` | `qwen/qwen3.7-flash` | Model used for the expiry. |
+| `CONDEX_LLM_REASONING_EFFORT` | `low` | `low`, `medium` or `high`. |
+| `CONDEX_LLM_TIMEOUT_SECONDS` | `60` | How long to wait for the model before applying ConDex’s default expiry. |
+| `ANTHROPIC_API_KEY` | none | An alternative to the model above: lets Claude set a missing expiry. Used when `CONDEX_LLM_API_KEY` is not set. |
+| `CONDEX_EXPIRY_AI` | `llm` with a `CONDEX_LLM_API_KEY`, else `claude` with an Anthropic key, else `off` | `llm`, `claude` or `off`: which AI sets a missing expiry. With `off`, or when the AI gives no usable answer, the thesis gets ConDex’s default of 7 days. Each AI evaluation is one model call, and an account gets at most 20 an hour. |
 | `CONDEX_NEAR_CLI` | found automatically | Path to near-cli-rs for one-click connect (an npm or pnpm `near` shim also works). The server prints at startup whether it found it. |
 
 ## Planned testnet demo
 
 - [ ] Publish a selected conversation with its conditions and expiry from an agent, and mint its thesis NFT on NEAR testnet.
-- [ ] Publish a thesis without an expiry date and show ConDex’s AI setting one, marked as set by ConDex.
+- [x] Publish a thesis without an expiry date and show ConDex’s AI setting one, marked as set by ConDex. (Works against the mock ledger.)
 - [ ] Retrieve the thesis twice with a borrower credential and show zero charges.
 - [ ] Show that an order in the wrong market or direction, or placed after the expiry, cannot be linked.
 - [ ] Demonstrate a cancelled, unfilled order and release the reserved fee.

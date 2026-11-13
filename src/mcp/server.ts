@@ -49,6 +49,7 @@ const publishShape = {
     'Time on that day in UTC, HH:MM. Only when the thesis depends on a time, such as "by the US open". ' +
     "Without it the thesis expires at 23:59 UTC on the expiry date.",
   ),
+  expires_at: z.string().optional().describe("Alternative to expiry_date and expiry_time: a full ISO date-time. Do not send both."),
   summary: z.string().max(1000).optional().describe("Public one-paragraph preview. Do not include private details."),
   fee_near: z.string().describe('Flat fee per filled order, in NEAR, e.g. "0.1"'),
   payout_account: z.string().optional().describe("NEAR account that receives fees. Defaults to the creator's account."),
@@ -118,6 +119,14 @@ export function buildMcpServer(opts: McpOptions): McpServer {
     description: "List public previews of published insight tokens: market, direction, expiry and fee (no message content).",
     inputSchema: { market: z.string().optional().describe("Filter by market") },
   }, ({ market }) => call("GET", `/v1/tokens${market ? `?market=${encodeURIComponent(market)}` : ""}`));
+
+  server.registerTool("condex_get_proof", {
+    title: "Get proof",
+    description:
+      "Proof of thesis (creator, publish time, expiry and who set it, fingerprint, whether it is still preserved) and " +
+      "every proof of trade (trader, order, first fill, fee paid) for a token. Public; never includes the conversation.",
+    inputSchema: { token_id: z.string().describe("Token id, e.g. ins_...-v1") },
+  }, ({ token_id }) => call("GET", `/v1/tokens/${encodeURIComponent(token_id)}/proof`));
 
   server.registerTool("condex_read_insight", {
     title: "Read insight",

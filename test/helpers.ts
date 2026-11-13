@@ -3,6 +3,23 @@ import type { AddressInfo } from "node:net";
 import { type AppDeps, createApp } from "../src/api/app.ts";
 import { type Config, loadConfig } from "../src/config.ts";
 import { signNep413, toNearPublicKey } from "../src/near/nep413.ts";
+import type { ExpiryEvaluator } from "../src/services/expiry.ts";
+
+/** Stands in for ConDex's AI: always answers "three days from now", and counts how often it was asked. */
+export function fakeAdvisor(): ExpiryEvaluator & { calls: number } {
+  return {
+    model: "fake",
+    calls: 0,
+    async evaluate(thesis) {
+      this.calls++;
+      return {
+        expiresAt: new Date(thesis.now.getTime() + 3 * 24 * 3600 * 1000).toISOString(),
+        timeGiven: true,
+        reason: "The thesis is a short-term fade, valid for a few days.",
+      };
+    },
+  };
+}
 
 /**
  * In-memory server on a random port. near-cli signing is off unless a test passes its own signer,

@@ -697,7 +697,7 @@ const SECTIONS = [
   },
   {
     title: "3. Visitor without a wallet",
-    hint: "No credentials at all. A visitor can see publisher details and insight previews; everything else asks them to connect a wallet.",
+    hint: "No credentials at all. A visitor can see publisher details, insight previews and the public proof of each thesis; everything else asks them to connect a wallet.",
     actions: [
       { id: "visitorPublisher", label: "View Alice's publisher page", run: async () => {
         const b = expectStatus(await call("GET", `/v1/publishers/${val("f-alice-acct")}`), 200);
@@ -712,6 +712,14 @@ const SECTIONS = [
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}/preview`), 200);
         expect(b.messages === undefined, "preview must not include the messages");
         return `${b.message_count} messages hidden, fee ${b.fee_per_filled_order.near} NEAR per filled order`;
+      } },
+      { id: "proofOfThesis", label: "Proof of thesis (public)", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}/proof`), 200);
+        const p = b.proof_of_thesis;
+        expect(p.preserved === true, "the stored thesis should still match its fingerprint");
+        expect(p.expires_at && p.expiry.set_by, "the proof should show the expiry and who set it");
+        expect(b.messages === undefined && p.conditions === undefined, "the proof must not include the conversation or the conditions");
+        return `fingerprint ${p.content_hash.slice(0, 12)}…, published ${utcText(p.published_at)}, expires ${utcText(p.expires_at)} (set by ${SET_BY[p.expiry.set_by]}), preserved; ${b.proofs_of_trade.length} proofs of trade`;
       } },
       { id: "readNoKey", label: "Read the conversation (expect 401)", run: async () => {
         return expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`), 401).error.message;
@@ -731,7 +739,8 @@ const SECTIONS = [
       { id: "read", label: "Read insight (Bob)", run: async () => {
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
         expect(b.charge.yocto === "0", "reading must cost nothing");
-        return `${b.messages.length} messages, charged ${b.charge.near} NEAR`;
+        expect(b.integrity.matches === true, "the stored thesis should still match its fingerprint");
+        return `${b.messages.length} messages, charged ${b.charge.near} NEAR, stored content matches the fingerprint`;
       } },
       { id: "readAgain", label: "Read again (still free)", run: async () => {
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
@@ -907,6 +916,15 @@ const SECTIONS = [
       { id: "getReceipt", label: "Get last receipt", run: async () => {
         const b = expectStatus(await call("GET", `/v1/receipts/${need("receiptId", "Fill an order")}`, { key: need("bobTrade", "Issue Bob's keys") }), 200);
         return `${b.fee.near} NEAR to ${b.payout_account} — ${b.evidence_label}`;
+      } },
+      { id: "proofsOfTrade", label: "Proofs of trade on the thesis (public)", run: async () => {
+        const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}/proof`), 200);
+        const proofs = b.proofs_of_trade;
+        if (STRICT) expect(proofs.length >= 1, "the fills above should have left a proof of trade");
+        const last = proofs.at(-1);
+        if (!last) return "no proof of trade yet: one appears on an order's first confirmed fill";
+        expect(last.thesis.content_hash === b.proof_of_thesis.content_hash, "a proof of trade should name the thesis fingerprint");
+        return `${proofs.length} proofs of trade; latest: ${last.trader} (${last.role}), ${last.order.side} ${last.order.market}, first fill ${last.fill.quantity} at ${last.fill.price ?? "no price"} (${last.fill.source}), fee ${last.fee_paid.near} NEAR`;
       } },
     ],
   },
