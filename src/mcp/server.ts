@@ -44,7 +44,9 @@ const publishShape = {
     invalidation: z.string().max(1000).optional().describe("What would prove the idea wrong, in the creator's words"),
     exit: z.string().max(1000).optional().describe("Optional: when to take profit or close"),
   }).optional().describe("The thesis conditions. Preserved exactly as published; a change is a new version."),
-  expires_at: z.string().optional().describe("ISO date-time after which the insight can no longer be traded on"),
+  expiry_date: z.string().optional().describe("UTC date (YYYY-MM-DD) after which no new trade can link to the thesis. Ask the creator for it; if they give none, ConDex's AI sets one and records why."),
+  expiry_time: z.string().optional().describe("UTC time (HH:MM) on that date, if the thesis depends on one, e.g. the US market open. Without it the thesis expires at 23:59 UTC."),
+  expires_at: z.string().optional().describe("Alternative to expiry_date and expiry_time: a full ISO date-time"),
   fee_near: z.string().describe('Flat fee per filled order, in NEAR, e.g. "0.1"'),
   payout_account: z.string().optional().describe("NEAR account that receives fees. Defaults to the creator's account."),
   messages: z.array(message).min(1).describe(
