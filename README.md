@@ -38,6 +38,7 @@ A thesis is the published conversation plus its conditions. The conditions are s
 | Price levels | Optional. The entry, invalidation and target as prices, so ConDex can [evaluate the thesis](#thesis-evaluation) against market data after the expiry. |
 | Expiry date | The last day a trade can be linked to the thesis. Every thesis has one. |
 | Expiry time | The time on that day, in UTC, when the thesis depends on one. |
+| Evaluation deadline | Optional. When the market prices stop counting for the [evaluation](#thesis-evaluation): a date or an instant on or after the expiry, at most 30 days later. Without one it is the expiry. |
 
 ### Expiry controls
 
@@ -143,11 +144,11 @@ The thesis NFT is not a fractional or transferable revenue-sharing token. Splitt
 
 After a thesis expires, ConDex judges it against market data and records whether its conditions were met. The creator does not report this and cannot change it.
 
-- **When.** Once, after the expiry. Until then the evaluation is pending, because the price can still reach any level.
-- **Against what.** The market’s prices from the moment of publishing up to the expiry, from a connected market data feed. The evaluation names the feed it used.
+- **When.** Once, after the evaluation deadline. Until then the evaluation is pending, because the price can still reach any level. The deadline is separate from the expiry: the expiry is the last moment a trade can be linked, and the evaluation deadline, which is the expiry unless the creator set a later one, gives a trade opened just before the expiry time to play out. It is fixed once published and covered by the fingerprint.
+- **Against what.** The market’s prices from the moment of publishing up to the evaluation deadline, from a connected market data feed. The evaluation names the feed it used.
 - **With what.** The thesis’s price levels. A thesis counts as entered when the price reaches its entry price, or at publishing when it has no entry price or the price is already past it. The invalidation price counts from publishing. The target price counts only once the thesis is entered.
 - **Fixed once recorded.** A later price cannot change the outcome.
-- **On the NFT.** The outcome is recorded on the thesis NFT, so the token carries its own evaluation. The contract refuses it before the expiry and never lets it change.
+- **On the NFT.** The outcome is recorded on the thesis NFT, so the token carries its own evaluation. The contract refuses it before the token’s expiry and never lets it change. The contract does not know the separate evaluation deadline, so an evaluation whose events fall after the expiry is recorded in ConDex but needs the contract updated before the NFT can carry it.
 
 | Outcome | When | Conditions met |
 | --- | --- | --- |
@@ -214,6 +215,7 @@ The API and code call a thesis an *insight*, and its fingerprint a `content_hash
 | --- | --- |
 | Expiry date required, with a reminder | Built. Every version has an expiry: the creator’s `expiry_date` and optional `expiry_time` (or a full ISO `expires_at`), or one that ConDex sets. A past or malformed expiry is refused. The MCP publish tool tells the creator’s agent to ask for the date and time, and the publish response says when ConDex had to set it. |
 | ConDex’s AI sets a missing expiry | Built, and off until the server has a key for a model. With `CONDEX_LLM_API_KEY`, an OpenAI-compatible reasoning model (Qwen on Grafilab by default) reads the thesis; with `ANTHROPIC_API_KEY`, Claude does. The AI takes the expiry from the deadline or event the thesis describes, at most 30 days out. The proof of thesis says `set_by: "condex_ai"` with the reason, and both are part of the content hash. With no model, or no usable answer, ConDex applies a default of 7 days and records `set_by: "condex_default"`, so nothing is published without an expiry. Both models are tested against stand-ins. The Claude path has not been run against the live API yet. |
+| Access expiry and evaluation deadline as separate items | Built. The proof of thesis shows `published_at`, `expires_at` and `evaluation_deadline`. The creator may send `evaluation_deadline` (a date or an ISO date-time, from the expiry up to 30 days after); without it, it equals the expiry. The evaluation and the sweep wait for it. |
 | Expiry stops new trades | Built. After the expiry, fee quotes and linked orders are refused, and reading still works. |
 | Thesis conditions as fields | Built. Market, direction, entry and invalidation are required fields, and the target is optional. The market and direction are public. The entry, invalidation and target are served with the conversation. Optional price levels (`entry_price`, `invalidation_price`, `target_price`) are checked against the direction, covered by the fingerprint and served with the conversation. |
 | Thesis NFT | Partly. Each version gets a token record on the mock ledger with a fingerprint, creator, payout account, fee, publish time, expiry and who set the expiry. It is not yet an NEP-171 NFT on NEAR. |

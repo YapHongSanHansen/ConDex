@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, afterEach, beforeEach, describe, mock, test } from "node:test";
+import { sweepEvaluations } from "../src/services/evaluationSweep.ts";
 import { ETH_THESIS, setupAliceAndBob, startServer } from "./helpers.ts";
 
 const srv = await startServer();
@@ -66,6 +67,48 @@ describe("price levels", () => {
       assert.equal(r.status, 400, JSON.stringify(body));
     }
     await publish({ direction: "short", entry_price: "3600", invalidation_price: "3700", target_price: "3300" });
+  });
+});
+
+describe("the evaluation deadline", () => {
+  test("is separate from the expiry: no new trade after the expiry, but prices count up to the deadline", async () => {
+    const tokenId = await publish({ evaluation_deadline: at(48) });
+    const proof = (await api("GET", `/v1/tokens/${tokenId}/proof`)).body.proof_of_thesis;
+    assert.equal(proof.expires_at, DEADLINE);
+    assert.equal(proof.evaluation_deadline, at(48));
+    // The target is reached after the expiry but before the evaluation deadline.
+    await prices([[-1, "3550"], [2, "3610"], [30, "3910"]]);
+    afterDeadline(); // 25h: expired, but not yet due for evaluation
+    assert.deepEqual(await evaluation(tokenId), { status: "pending", deadline: at(48), source: "simulated" });
+    mock.timers.setTime(T0 + 49 * 3_600_000);
+    const ev = await evaluation(tokenId);
+    assert.equal(ev.outcome, "target_hit");
+    assert.equal(ev.deadline, at(48));
+  });
+
+  test("is covered by the fingerprint", async () => {
+    const tokenId = await publish({ evaluation_deadline: at(48) });
+    srv.ctx.db.prepare("UPDATE insight_versions SET evaluation_deadline = ? WHERE token_id = ?").run(at(72), tokenId);
+    assert.equal((await api("GET", `/v1/tokens/${tokenId}`, { key: s.bobRead })).body.integrity.matches, false);
+  });
+
+  test("accepts a date, and refuses one before the expiry or too long after it", async () => {
+    const day = await publish({ evaluation_deadline: "2030-03-03" });
+    assert.equal((await api("GET", `/v1/tokens/${day}/proof`)).body.proof_of_thesis.evaluation_deadline, "2030-03-03T23:59:59.000Z");
+    for (const evaluation_deadline of [at(23), "2030-06-01", "soon"]) {
+      const r = await api("POST", "/v1/insights", { key: s.alicePublish, body: { ...LONG, evaluation_deadline } });
+      assert.equal(r.status, 400, evaluation_deadline);
+      assert.equal(r.body.error.code, "invalid_evaluation_deadline");
+    }
+  });
+
+  test("the sweep waits for it", async () => {
+    const tokenId = await publish({ evaluation_deadline: at(48) });
+    mock.timers.setTime(T0 + 30 * 3_600_000);
+    assert.equal(sweepEvaluations(srv.ctx), 0);
+    mock.timers.setTime(T0 + 49 * 3_600_000);
+    assert.equal(sweepEvaluations(srv.ctx), 1);
+    assert.equal((await evaluation(tokenId)).status, "evaluated");
   });
 });
 

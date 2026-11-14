@@ -77,7 +77,8 @@ describe("thesis conditions", () => {
       token_id: read.token_id, insight_id: read.insight_id, version: read.version, title: read.title, summary: read.summary,
       conditions: read.conditions,
       expiry: {
-        expires_at: read.expiry.expires_at, time_given: read.expiry.time_given, set_by: read.expiry.set_by, reason: read.expiry.reason,
+        expires_at: read.expiry.expires_at, evaluation_deadline: read.expiry.evaluation_deadline, time_given: read.expiry.time_given,
+        set_by: read.expiry.set_by, reason: read.expiry.reason,
       },
       messages: read.messages,
     }));
@@ -110,7 +111,7 @@ describe("expiry", () => {
     const dateOnly = (await publish({ ...ETH_THESIS, expiry_date: day })).body;
     assert.equal(dateOnly.expires_at, `${day}T23:59:59.000Z`);
     assert.deepEqual(dateOnly.expiry, {
-      expires_at: `${day}T23:59:59.000Z`, date: day, time: "23:59:59", time_given: false, set_by: "creator", reason: null,
+      expires_at: `${day}T23:59:59.000Z`, evaluation_deadline: `${day}T23:59:59.000Z`, date: day, time: "23:59:59", time_given: false, set_by: "creator", reason: null,
     });
     assert.equal(dateOnly.notice, undefined, "no notice when the creator set the expiry");
 
@@ -204,7 +205,7 @@ describe("ConDex's AI sets a missing expiry", () => {
     assert.equal(r.status, 201);
     assert.equal(r.body.expires_at, `${day}T13:30:00.000Z`);
     assert.deepEqual(r.body.expiry, {
-      expires_at: `${day}T13:30:00.000Z`, date: day, time: "13:30:00", time_given: true, set_by: "condex_ai",
+      expires_at: `${day}T13:30:00.000Z`, evaluation_deadline: `${day}T13:30:00.000Z`, date: day, time: "13:30:00", time_given: true, set_by: "condex_ai",
       reason: "The thesis says to walk away if neither happens by the US open.",
     });
     assert.match(r.body.notice, /so ConDex's AI set it to \d{4}-\d{2}-\d{2} 13:30 UTC/);

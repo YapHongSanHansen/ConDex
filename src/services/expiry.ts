@@ -86,6 +86,30 @@ export function expiryInstant(date: string, time: string | null): Date {
   return at;
 }
 
+/** How long after the expiry a creator may set the evaluation deadline. */
+export const MAX_EVALUATION_DAYS = 30;
+
+/**
+ * The evaluation deadline: the moment up to which market prices are used to judge the thesis. It is separate from
+ * the expiry (the last moment a trade can be linked), so a trade opened just before the expiry has time to play out.
+ * The creator gives a date (the end of that day, UTC) or a full instant. Without one it is the expiry.
+ */
+export function evaluationDeadline(given: string | null, expiresAt: string): string {
+  if (given === null) return expiresAt;
+  const at = DATE_RE.test(given) ? expiryInstant(given, null) : new Date(given);
+  if (Number.isNaN(at.getTime())) {
+    throw badRequest("invalid_evaluation_deadline", 'evaluation_deadline must be a date like "2026-12-31" or an ISO 8601 date-time like "2026-12-31T13:30:00Z"');
+  }
+  const expiry = Date.parse(expiresAt);
+  if (at.getTime() < expiry) {
+    throw badRequest("invalid_evaluation_deadline", `The evaluation deadline cannot be before the expiry (${expiresAt})`);
+  }
+  if (at.getTime() > expiry + MAX_EVALUATION_DAYS * DAY_MS) {
+    throw badRequest("invalid_evaluation_deadline", `The evaluation deadline can be at most ${MAX_EVALUATION_DAYS} days after the expiry`);
+  }
+  return at.toISOString();
+}
+
 /**
  * The creator's own expiry, if they gave one: a date with an optional UTC time, or a full instant.
  * null when they gave none, so ConDex sets it. Throws when what they gave is unusable.

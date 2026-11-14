@@ -44,7 +44,7 @@ export interface EvaluationRow {
  * Before the deadline there is none (null), because the price can still reach any level.
  */
 export function evaluateThesis(ctx: Ctx, row: VersionRow): EvaluationRow | null {
-  const deadline = row.expires_at;
+  const deadline = row.evaluation_deadline;
   if (nowIso() < deadline) return null;
   const stored = ctx.db.prepare("SELECT * FROM thesis_evaluations WHERE token_id = ?").get(row.token_id) as EvaluationRow | undefined;
   if (stored) return stored;
@@ -132,7 +132,7 @@ function judge(row: VersionRow, reference: PricePoint | null, later: PricePoint[
 
 /** Public view of an evaluation. The price levels themselves stay private with the conditions. */
 export function evaluationView(ctx: Ctx, row: VersionRow, ev: EvaluationRow | null) {
-  if (!ev) return { status: "pending" as const, deadline: row.expires_at, source: ctx.market.name };
+  if (!ev) return { status: "pending" as const, deadline: row.evaluation_deadline, source: ctx.market.name };
   return {
     status: "evaluated" as const,
     outcome: ev.outcome,

@@ -11,7 +11,7 @@ import type { VersionRow } from "./insights.ts";
 export function sweepEvaluations(ctx: Ctx, limit = 100): number {
   const due = ctx.db.prepare(
     `SELECT v.* FROM insight_versions v LEFT JOIN thesis_evaluations e ON e.token_id = v.token_id
-      WHERE e.token_id IS NULL AND v.expires_at <= ? ORDER BY v.expires_at LIMIT ?`,
+      WHERE e.token_id IS NULL AND v.evaluation_deadline <= ? ORDER BY v.evaluation_deadline LIMIT ?`,
   ).all(nowIso(), limit) as unknown as VersionRow[];
   for (const row of due) evaluateThesis(ctx, row);
   return due.length;

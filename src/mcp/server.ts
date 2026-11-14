@@ -56,6 +56,10 @@ const publishShape = {
     "Without it the thesis expires at 23:59 UTC on the expiry date.",
   ),
   expires_at: z.string().optional().describe("Alternative to expiry_date and expiry_time: a full ISO date-time. Do not send both."),
+  evaluation_deadline: z.string().optional().describe(
+    "Optional. A date (YYYY-MM-DD, UTC) or ISO date-time, on or after the expiry and at most 30 days later. Market prices up to " +
+    "then are used to judge the thesis, so a trade opened just before the expiry has time to play out. Without it, the expiry is used.",
+  ),
   summary: z.string().max(1000).optional().describe("Public one-paragraph preview. Do not include private details."),
   fee_near: z.string().describe('Flat fee per filled order, in NEAR, e.g. "0.1"'),
   payout_account: z.string().optional().describe("NEAR account that receives fees. Defaults to the creator's account."),

@@ -57,6 +57,8 @@ export const publishBody = z.object({
   expiry_date: z.string().trim().max(40).nullable().optional(),
   expiry_time: z.string().trim().max(40).nullable().optional(),
   expires_at: z.string().trim().max(40).nullable().optional(),
+  // When prices stop counting for the evaluation: a date or an ISO date-time, on or after the expiry. Defaults to the expiry.
+  evaluation_deadline: z.string().trim().max(40).nullable().optional(),
   fee_near: nearAmount,
   payout_account: z.string().nullable().optional(),
   messages: z.array(messageSchema).min(1).max(200),

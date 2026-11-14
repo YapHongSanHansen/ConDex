@@ -280,6 +280,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     expiryDate: body.expiry_date || null,
     expiryTime: body.expiry_time || null,
     expiresAt: body.expires_at || null,
+    evaluationDeadline: body.evaluation_deadline || null,
     feeNear: body.fee_near,
     payoutAccount: body.payout_account ?? null,
     messages: body.messages,

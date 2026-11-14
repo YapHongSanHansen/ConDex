@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS insight_versions (
   expiry_time_given INTEGER NOT NULL,   -- 0: only a date was set, so it expires at the end of that day
   expiry_set_by     TEXT NOT NULL,      -- creator | condex_ai | condex_default
   expiry_reason     TEXT,               -- why ConDex chose it; NULL when the creator set it
+  evaluation_deadline TEXT NOT NULL,    -- ISO 8601, UTC; the thesis is judged on prices up to here. Never before expires_at
   messages          TEXT NOT NULL,      -- JSON array, private: served only to read-scoped keys
   content_hash      TEXT NOT NULL,
   mint_tx           TEXT NOT NULL,

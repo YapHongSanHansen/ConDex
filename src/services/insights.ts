@@ -5,7 +5,7 @@ import { formatDecimal, parseDecimal } from "../quantity.ts";
 import { amount, canonicalJson, newId, nowIso, parseNear, sha256Hex } from "../util.ts";
 import { type AccountRow, type Principal, accountView, assertNearAccountId, getAccount, requireScope } from "./accounts.ts";
 import { accuracy, evaluateThesis, evaluationView, trackRecord, tradeResult } from "./evaluation.ts";
-import { type ExpirySetBy, type ResolvedExpiry, resolveExpiry } from "./expiry.ts";
+import { type ExpirySetBy, type ResolvedExpiry, evaluationDeadline, resolveExpiry } from "./expiry.ts";
 import { loadOrder } from "./orders.ts";
 import { tradeSummary } from "./trades.ts";
 import { requireSubscription, subscriptionTerms } from "./subscriptions.ts";
@@ -44,6 +44,8 @@ export interface PublishInput {
   expiryTime?: string | null;
   /** Instead of a date and time: a full ISO 8601 instant. */
   expiresAt?: string | null;
+  /** When prices stop counting for the evaluation: a date or an instant, on or after the expiry. Defaults to the expiry. */
+  evaluationDeadline?: string | null;
   feeNear: string;
   payoutAccount?: string | null;
   messages: Message[];
@@ -54,7 +56,7 @@ export interface VersionRow {
   fee_yocto: string; title: string; summary: string | null; market: string; direction: Direction; entry: string;
   invalidation: string; target: string | null; entry_price: string | null; invalidation_price: string | null;
   target_price: string | null; expires_at: string; expiry_time_given: number;
-  expiry_set_by: ExpirySetBy; expiry_reason: string | null; messages: string; content_hash: string; mint_tx: string;
+  expiry_set_by: ExpirySetBy; expiry_reason: string | null; evaluation_deadline: string; messages: string; content_hash: string; mint_tx: string;
   created_at: string;
 }
 
@@ -68,7 +70,7 @@ export type Levels = Pick<VersionRow, "entry_price" | "invalidation_price" | "ta
 /** A publish request after validation, with its expiry settled. */
 interface Prepared extends Conditions {
   title: string; summary: string | null; feeYocto: bigint; payoutAccount: string; messages: Message[];
-  levels: Levels; expiry: ResolvedExpiry;
+  levels: Levels; expiry: ResolvedExpiry; evaluationDeadline: string;
 }
 
 /** Publishes a new insight. Its first version is minted as a token. */
@@ -232,6 +234,7 @@ export function thesisProof(ctx: Ctx, tokenId: string) {
       creator,
       published_at: row.created_at,
       expires_at: row.expires_at,
+      evaluation_deadline: row.evaluation_deadline,
       expiry: expiryView(row),
       content_hash: row.content_hash,
       /** True while the stored conditions, expiry and conversation still hash to the minted fingerprint. */
@@ -303,7 +306,8 @@ async function prepare(ctx: Ctx, principal: Principal, input: PublishInput): Pro
     { date: input.expiryDate?.trim() || null, time: input.expiryTime?.trim() || null, instant: input.expiresAt?.trim() || null },
     { title: input.title, summary, ...conditions, messages: input.messages },
   );
-  return { title: input.title, summary, ...conditions, feeYocto, payoutAccount, messages: input.messages, levels, expiry };
+  const deadline = evaluationDeadline(input.evaluationDeadline?.trim() || null, expiry.expiresAt);
+  return { title: input.title, summary, ...conditions, feeYocto, payoutAccount, messages: input.messages, levels, expiry, evaluationDeadline: deadline };
 }
 
 /**
@@ -334,7 +338,7 @@ function priceLevels(input: PublishInput): Levels {
 type Fingerprinted = Pick<VersionRow,
   "token_id" | "insight_id" | "version" | "title" | "summary" | "market" | "direction" | "entry" | "invalidation" |
   "target" | "entry_price" | "invalidation_price" | "target_price" | "expires_at" | "expiry_time_given" | "expiry_set_by" |
-  "expiry_reason" | "messages">;
+  "expiry_reason" | "evaluation_deadline" | "messages">;
 
 /**
  * The fingerprint (content_hash) of one thesis version. It covers the conditions, the expiry with who set
@@ -353,7 +357,10 @@ function fingerprint(r: Fingerprinted): string {
       market: r.market, direction: r.direction, entry: r.entry, invalidation: r.invalidation, target: r.target,
       entry_price: r.entry_price, invalidation_price: r.invalidation_price, target_price: r.target_price,
     },
-    expiry: { expires_at: r.expires_at, time_given: r.expiry_time_given === 1, set_by: r.expiry_set_by, reason: r.expiry_reason },
+    expiry: {
+      expires_at: r.expires_at, evaluation_deadline: r.evaluation_deadline, time_given: r.expiry_time_given === 1,
+      set_by: r.expiry_set_by, reason: r.expiry_reason,
+    },
     messages: JSON.parse(r.messages) as Message[],
   }));
 }
@@ -370,7 +377,7 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
     token_id: tokenId, insight_id: insightId, version, title: p.title, summary: p.summary,
     market: p.market, direction: p.direction, entry: p.entry, invalidation: p.invalidation, target: p.target, ...p.levels,
     expires_at: p.expiry.expiresAt, expiry_time_given: p.expiry.timeGiven ? 1 : 0, expiry_set_by: p.expiry.setBy,
-    expiry_reason: p.expiry.reason, messages: JSON.stringify(p.messages),
+    expiry_reason: p.expiry.reason, evaluation_deadline: p.evaluationDeadline, messages: JSON.stringify(p.messages),
   };
   const contentHash = fingerprint(stored);
   const createdAt = nowIso();
@@ -387,13 +394,13 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
   ctx.db.prepare(
     `INSERT INTO insight_versions (token_id, insight_id, version, creator_id, payout_account, fee_yocto, title, summary,
        market, direction, entry, invalidation, target, entry_price, invalidation_price, target_price, expires_at,
-       expiry_time_given, expiry_set_by, expiry_reason, messages, content_hash, mint_tx, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       expiry_time_given, expiry_set_by, expiry_reason, evaluation_deadline, messages, content_hash, mint_tx, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     tokenId, insightId, version, principal.account.id, p.payoutAccount, p.feeYocto.toString(), p.title, p.summary,
     p.market, p.direction, p.entry, p.invalidation, p.target, p.levels.entry_price, p.levels.invalidation_price,
     p.levels.target_price, p.expiry.expiresAt, p.expiry.timeGiven ? 1 : 0,
-    p.expiry.setBy, p.expiry.reason, stored.messages, contentHash, tx, createdAt,
+    p.expiry.setBy, p.expiry.reason, p.evaluationDeadline, stored.messages, contentHash, tx, createdAt,
   );
   const row = getVersion(ctx, tokenId);
   // The creator is told when ConDex had to set the expiry, so they can publish a version with their own.
@@ -410,6 +417,8 @@ function expiryNotice(r: VersionRow): string {
 function expiryView(r: VersionRow) {
   return {
     expires_at: r.expires_at,
+    /** Market prices up to here are used to judge the thesis. The same as expires_at unless the creator set a later one. */
+    evaluation_deadline: r.evaluation_deadline,
     date: r.expires_at.slice(0, 10),
     /** UTC. When no time was set, this is the end of the day. */
     time: r.expires_at.slice(11, 19),

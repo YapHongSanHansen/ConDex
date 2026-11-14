@@ -111,9 +111,11 @@ describe("drawing: Trader A publishes, ConDex proves, an AI agent reads", () => 
     assert.equal(p.expires_at, `${EXPIRY_DATE}T14:30:00.000Z`);
   });
 
-  test("record the access expiry separately from the trade evaluation deadline", { todo: "one expires_at covers both; there is no separate evaluation deadline" }, async () => {
+  test("record the access expiry separately from the trade evaluation deadline", async () => {
     const p = (await api("GET", `/v1/tokens/${s.tokenId}/proof`)).body.proof_of_thesis;
-    assert.ok(p.evaluation_deadline);
+    // Without its own evaluation deadline, a thesis is judged up to its expiry.
+    assert.equal(p.evaluation_deadline, p.expires_at);
+    assert.equal(p.expiry.evaluation_deadline, p.expires_at);
   });
 
   test("4. proof of thesis: the original conditions are preserved", async () => {
