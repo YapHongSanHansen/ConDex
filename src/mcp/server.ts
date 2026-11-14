@@ -122,7 +122,10 @@ export function buildMcpServer(opts: McpOptions): McpServer {
 
   server.registerTool("condex_list_insights", {
     title: "List insights",
-    description: "List public previews of published insight tokens: market, direction, expiry and fee (no message content).",
+    description:
+      "List the free abstracts of published theses: title, summary, market, direction, expiry, fee, and the author's " +
+      "score (accuracy against market data, and borrowers' net return %, net profit $ and maximum drawdown %). " +
+      "No conditions or messages: those need a subscription (condex_read_insight).",
     inputSchema: { market: z.string().optional().describe("Filter by market") },
   }, ({ market }) => call("GET", `/v1/tokens${market ? `?market=${encodeURIComponent(market)}` : ""}`));
 
@@ -140,7 +143,8 @@ export function buildMcpServer(opts: McpOptions): McpServer {
     title: "Read insight",
     description:
       "Read the full approved conversation behind a token, with its conditions (market, direction, entry, invalidation, " +
-      "target) and its expiry. Always free, also after the expiry. Needs a key with read scope.",
+      "target, price levels) and its expiry. Needs a key with read scope and an active ConDex subscription; without " +
+      "one ConDex answers 402 subscription_required with the terms (see condex_subscribe). Reads cost nothing extra.",
     inputSchema: { token_id: z.string() },
   }, ({ token_id }) => call("GET", `/v1/tokens/${encodeURIComponent(token_id)}`));
 
@@ -192,6 +196,29 @@ export function buildMcpServer(opts: McpOptions): McpServer {
     description: "List settlement receipts where this account is the borrower or the creator.",
     inputSchema: {},
   }, () => call("GET", "/v1/receipts"));
+
+  server.registerTool("condex_subscription_status", {
+    title: "Subscription status",
+    description: "Show whether this account has an active ConDex subscription, when it ends, and its fee and period.",
+    inputSchema: {},
+  }, () => call("GET", "/v1/subscription"));
+
+  server.registerTool("condex_subscribe", {
+    title: "Subscribe",
+    description:
+      "Pay one ConDex subscription period from the account's ledger balance. It unlocks every thesis's conditions and " +
+      "conversation; trading needs no subscription. The fee goes to ConDex. Renewing early adds a period after the current one. " +
+      "Only call this after the user has approved the fee. Needs a key with trade scope.",
+    inputSchema: {},
+  }, () => call("POST", "/v1/subscription"));
+
+  server.registerTool("condex_get_publisher", {
+    title: "Get publisher",
+    description:
+      "A creator's public page: their score (accuracy of their theses against market data, and borrowers' net return %, " +
+      "net profit $ and maximum drawdown % from closed trades), stats and the abstracts of what they published. Public.",
+    inputSchema: { near_account_id: z.string().describe("The creator's NEAR account, e.g. alice.testnet") },
+  }, ({ near_account_id }) => call("GET", `/v1/publishers/${encodeURIComponent(near_account_id)}`));
 
   return server;
 }

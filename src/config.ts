@@ -44,6 +44,16 @@ export interface Config {
   expiryAi: "llm" | "claude" | "off";
   /** The OpenAI-compatible reasoning model. null when CONDEX_LLM_API_KEY is not set. */
   llm: LlmConfig | null;
+  /** The subscription that unlocks every full thesis. Its fee goes to ConDex, not to creators. */
+  subscription: SubscriptionConfig;
+}
+
+export interface SubscriptionConfig {
+  /** In NEAR, e.g. "1". */
+  feeNear: string;
+  days: number;
+  /** The NEAR account that receives subscription fees. */
+  treasuryAccount: string;
 }
 
 /** An OpenAI-compatible chat completions endpoint. */
@@ -115,6 +125,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxyHops: parseInteger(env, "CONDEX_TRUST_PROXY", 0, 0),
     expiryAi,
     llm,
+    subscription: {
+      feeNear: parseNearAmount(env, "CONDEX_SUBSCRIPTION_FEE_NEAR", "1"),
+      days: parseInteger(env, "CONDEX_SUBSCRIPTION_DAYS", 30),
+      treasuryAccount: env.CONDEX_TREASURY_ACCOUNT?.trim() || "condex-treasury.testnet",
+    },
   };
 }
 
@@ -148,6 +163,13 @@ function parseChoice<T extends string>(env: NodeJS.ProcessEnv, name: string, cho
 }
 
 /** Empty means "use the default"; anything else must be a whole number of at least `min`. */
+function parseNearAmount(env: NodeJS.ProcessEnv, name: string, fallback: string): string {
+  const value = env[name]?.trim();
+  if (!value) return fallback;
+  if (!/^\d+(\.\d{1,24})?$/.test(value)) throw new Error(`${name} must be a NEAR amount like "1" or "0.5", got "${value}"`);
+  return value;
+}
+
 function parseInteger(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1): number {
   const raw = env[name]?.trim();
   if (!raw) return fallback;

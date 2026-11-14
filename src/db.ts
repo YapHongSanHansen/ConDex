@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -198,6 +198,19 @@ CREATE TABLE IF NOT EXISTS receipts (
   created_at           TEXT NOT NULL
 );
 
+-- Subscriptions ------------------------------------------------------------
+-- One period per payment. A renewal starts when the current period ends.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id            TEXT PRIMARY KEY,
+  account_id    TEXT NOT NULL REFERENCES accounts(id),
+  starts_at     TEXT NOT NULL,
+  ends_at       TEXT NOT NULL,
+  amount_yocto  TEXT NOT NULL,
+  tx            TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS subscriptions_by_account ON subscriptions (account_id, ends_at);
+
 -- Mock NEAR ledger -------------------------------------------------------
 -- Stands in for the NEAR contract until it is deployed. Keyed by NEAR account id.
 CREATE TABLE IF NOT EXISTS ledger_balances (
@@ -228,6 +241,14 @@ CREATE TABLE IF NOT EXISTS ledger_reserves (
   status        TEXT NOT NULL,            -- reserved | settled | released
   reserve_tx    TEXT NOT NULL,
   final_tx      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ledger_subscriptions (
+  subscription_id  TEXT PRIMARY KEY,
+  payer            TEXT NOT NULL,
+  payee            TEXT NOT NULL,
+  amount_yocto     TEXT NOT NULL,
+  tx               TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ledger_txs (
@@ -267,8 +288,8 @@ CREATE TABLE IF NOT EXISTS thesis_evaluations (
 
 const ALL_TABLES = [
   "thesis_evaluations", "market_prices",
-  "ledger_txs", "ledger_reserves", "ledger_tokens", "ledger_balances",
-  "closing_events", "closing_orders", "receipts", "execution_events", "orders", "quotes", "reads",
+  "ledger_txs", "ledger_subscriptions", "ledger_reserves", "ledger_tokens", "ledger_balances",
+  "subscriptions", "closing_events", "closing_orders", "receipts", "execution_events", "orders", "quotes", "reads",
   "insight_versions", "insights", "sessions", "auth_challenges", "api_keys", "accounts",
 ];
 

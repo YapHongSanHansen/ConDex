@@ -26,6 +26,7 @@ import {
 import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { closeTrade, getClosingOrder } from "../services/trades.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
+import { subscribe, subscriptionStatus } from "../services/subscriptions.ts";
 import { amount, parseNear } from "../util.ts";
 import { assertSameMachine, isSameMachine } from "./local.ts";
 import {
@@ -283,7 +284,16 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     res.status(201).json(await publishVersion(ctx, p, req.params.insightId!, toPublishInput(parse(publishBody, req.body))));
   });
 
-  // ---- public (no wallet needed): publisher details and previews only ----
+  // ---- subscription: unlocks every full thesis (trading needs none); the fee goes to ConDex ----
+  app.post("/v1/subscription", (req, res) => {
+    res.status(201).json(subscribe(ctx, auth(req)));
+  });
+
+  app.get("/v1/subscription", (req, res) => {
+    res.json(subscriptionStatus(ctx, auth(req)));
+  });
+
+  // ---- public (no wallet needed): publisher details and abstracts only ----
   app.get("/v1/publishers/:nearAccountId", (req, res) => {
     res.json(publisherProfile(ctx, req.params.nearAccountId!));
   });
@@ -303,7 +313,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     res.json(thesisProof(ctx, req.params.tokenId!));
   });
 
-  // Full conversation: needs a read-scoped key. Always free.
+  // Full conversation and conditions: needs a read-scoped key and an active subscription (or being the creator).
   app.get("/v1/tokens/:tokenId", (req, res) => {
     res.json(readInsight(ctx, auth(req), req.params.tokenId!));
   });

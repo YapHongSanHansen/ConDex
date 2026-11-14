@@ -2,7 +2,7 @@
 
 The contract is written, in `contract/`, and follows this document. It has unit tests and has not been deployed. The API does not use it yet: it still runs against `MockLedger` (`src/ledger/mockLedger.ts`), which stands in for the contract. See [Building and testing](#building-and-testing).
 
-The contract follows the flow described in the README: a trade is closed by a close reported from the execution side, and ConDex evaluates each thesis against market data after its expiry. It also includes two rules the README does not describe yet: the contract checks the trader's own approval before reserving a fee, and it records subscriptions.
+The contract follows the flow described in the README: a trade is closed by a close reported from the execution side, and ConDex evaluates each thesis against market data after its expiry. It also includes two rules the README now describes too: the contract checks the trader's own approval before reserving a fee, and it records subscriptions.
 
 In this document Bob is the **trader** and Alice is the **thesis creator**. The README and the code call the trader a "borrower".
 
@@ -13,7 +13,7 @@ In this document Bob is the **trader** and Alice is the **thesis creator**. The 
 - **Thesis NFT.** Mint one NEP-171 token per thesis version, with NEP-177 metadata (`issued_at`, `expires_at`), the fingerprint, the fee and the payout account. Transfers are disabled.
 - **Fee escrow.** Hold the trader's deposit, reserve the fee when the trader approves an order, then either credit it to the thesis creator on the first fill or return it to the trader. Settle and release must be safe to call twice for the same order.
 - **Proof of trade.** Record each proof on the token when the fee settles, and add each closing fill when the execution side reports the trade closed.
-- **Subscriptions.** Record until when each trader is subscribed, so the API knows whether to serve the complete thesis or the limited preview.
+- **Subscriptions.** Record until when each trader is subscribed, so the API knows whether to serve the complete thesis or only the abstract.
 
 No fungible token (NEP-141) is needed. Fees and subscriptions are paid in native NEAR. A second contract would only be needed for fractional revenue-sharing tokens, which the README lists under "Not in this version".
 
@@ -146,14 +146,14 @@ The trader's agent can hold a NEAR key that is limited to `reserve_fee` on this 
 - **`reserve_fee` is refused at or after the token's `expires_at`,** by the time of the block. This is where a late approval is stopped on chain. The API also refuses it earlier, with `insight_expired`.
 - **`settle_fee`, `release_fee` and `record_close` never check the expiry.** An order approved at 14:29 can earn its first-fill payment at 14:31 although the thesis expired at 14:30, and its trade can be closed later still.
 
-## Subscriptions and the limited preview
+## Subscriptions and the abstract
 
 The thesis is stored off-chain, so the contract's part is small: it records who is subscribed and until when. The API reads `subscription_of` before it serves a thesis through the app or MCP.
 
 - A trader with an active subscription gets the complete thesis.
-- Everyone else gets a limited preview: one piece of the thesis, and the same piece on every read, so repeated reads cannot be pieced together into the whole.
+- Everyone else gets the abstract and the author's accuracy, without the conditions or the conversation.
 
-Choosing and serving the preview is the API's job.
+Serving the abstract and the author's accuracy is the API's job.
 
 Assumed until decided:
 
@@ -161,7 +161,7 @@ Assumed until decided:
 - ConDex sets one price and one period for everyone.
 - The payment goes to ConDex, not to the thesis creator.
 
-The README does not describe a subscription yet and still says every read is free.
+The README now describes the subscription. The API runs it on the mock ledger for now (`src/services/subscriptions.ts`), with the same rules: a renewal extends from the later of now and the current end. Without a subscription the API serves the abstract and the author's accuracy, not a piece of the thesis. Trading needs no subscription, as in the contract.
 
 ## Timestamps
 
@@ -179,7 +179,7 @@ Every token, reserve, proof, closing fill and subscription takes storage, and NE
 
 - **The conversation and the conditions.** Only their fingerprint goes on NEAR.
 - **Matching the order to the thesis.** The token does not store the market or the direction, so the API checks them before the trader is asked to approve.
-- **The limited preview.** The contract only says who is subscribed.
+- **The abstract.** The contract only says who is subscribed.
 - **Results, verified results and the creator score.** The score service calculates them. The contract stores the fills, not the percentages.
 - **The thesis evaluation.** See [Open decisions](#open-decisions).
 
@@ -219,7 +219,7 @@ Not done yet: a build with `cargo near`, a deployment to testnet, and tests agai
 1. **Later fills and the final status of the opening order.** Only the first fill is recorded, with the proof of trade. The result of a trade uses the average price of all its opening fills, and a trade only counts as closed once the opening order can fill no further. So a result cannot be recalculated from NEAR alone when an order filled in parts, and `record_close` cannot check a close against the quantity still open. Fixing this needs two more functions: one to record each later fill, and one to mark the opening order finished.
 2. **The thesis creator's own trades.** The README says a creator's own trade is free and counts in their own track record. `settle_fee` only records a proof when there is a fee to pay, so a fee-free trade has no way onto the token yet. The API also refuses it today (`self_link` in `src/services/orders.ts`).
 3. **The thesis evaluation.** The API records it once, off-chain. Until it is on the token, a creator's accuracy cannot be checked from NEAR. Recording it would need one more function, for example `record_evaluation(token_id, outcome, evaluated_at, source)`, and a decision on which account may call it.
-4. **The subscription terms.** The three assumptions under [Subscriptions and the limited preview](#subscriptions-and-the-limited-preview).
+4. **The subscription terms.** The three assumptions under [Subscriptions and the abstract](#subscriptions-and-the-abstract).
 5. **Replacing the operator or the reporter.** Both accounts are fixed when the contract is set up. If one of their keys leaks, the only fix today is to deploy the contract again.
 6. **A reserve the reporter never reports on.** Only the reporter can settle or release. If it never does, the trader's fee stays reserved. A time limit after which the trader can take it back would remove that dependence.
 7. **Who pays for storage.** The contract pays for every record, and nothing charges the account that caused it. Someone could make many tiny deposits to use up the contract's own NEAR. A minimum deposit would stop that.

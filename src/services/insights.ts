@@ -8,6 +8,7 @@ import { accuracy, evaluateThesis, evaluationView, trackRecord, tradeResult } fr
 import { type ExpirySetBy, type ResolvedExpiry, resolveExpiry } from "./expiry.ts";
 import { loadOrder } from "./orders.ts";
 import { tradeSummary } from "./trades.ts";
+import { requireSubscription, subscriptionTerms } from "./subscriptions.ts";
 
 export interface Message {
   role: "user" | "assistant" | "system" | "tool";
@@ -105,11 +106,31 @@ export function listPreviews(ctx: Ctx, filter: { creatorId?: string; market?: st
   if (filter.market) { clauses.push("market = ?"); params.push(filter.market.trim().toUpperCase()); }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = ctx.db.prepare(`SELECT * FROM insight_versions ${where} ORDER BY created_at DESC LIMIT 200`).all(...params) as unknown as VersionRow[];
-  return rows.map((r) => previewView(ctx, r));
+  // One score per creator, not per row.
+  const scores = new Map<string, ReturnType<typeof creatorScore>>();
+  return rows.map((r) => {
+    if (!scores.has(r.creator_id)) scores.set(r.creator_id, creatorScore(ctx, r.creator_id));
+    return previewView(ctx, r, scores.get(r.creator_id));
+  });
 }
 
 export function getPreview(ctx: Ctx, tokenId: string) {
   return previewView(ctx, getVersion(ctx, tokenId));
+}
+
+/**
+ * A creator's score, calculated only from market data and proofs of trade. There is no self-reported or
+ * reputation figure. Public: it is part of every abstract.
+ */
+export function creatorScore(ctx: Ctx, creatorId: string) {
+  const versions = ctx.db.prepare("SELECT * FROM insight_versions WHERE creator_id = ?").all(creatorId) as unknown as VersionRow[];
+  // Creators cannot link orders to their own theses (orders.ts), so every closed trade here is a borrower's.
+  const borrowerTrades = (ctx.db.prepare("SELECT order_id FROM receipts WHERE creator_id = ? ORDER BY created_at, rowid").all(creatorId) as Array<{ order_id: string }>)
+    .map((r) => tradeResult(ctx, r.order_id).raw);
+  return {
+    accuracy: accuracy(versions.map((v) => evaluateThesis(ctx, v))),
+    borrowers: trackRecord(borrowerTrades),
+  };
 }
 
 /** Public publisher page: who they are, what they published and how often it was traded. No message content. */
@@ -124,17 +145,9 @@ export function publisherProfile(ctx: Ctx, nearAccountId: string) {
   const { n: readCount } = ctx.db.prepare(
     "SELECT COUNT(*) AS n FROM reads r JOIN insight_versions v ON v.token_id = r.token_id WHERE v.creator_id = ?",
   ).get(account.id) as { n: number };
-  const versions = ctx.db.prepare("SELECT * FROM insight_versions WHERE creator_id = ?").all(account.id) as unknown as VersionRow[];
-  // Creators cannot link orders to their own theses (orders.ts), so every closed trade here is a borrower's.
-  const borrowerTrades = (ctx.db.prepare("SELECT order_id FROM receipts WHERE creator_id = ? ORDER BY created_at, rowid").all(account.id) as Array<{ order_id: string }>)
-    .map((r) => tradeResult(ctx, r.order_id).raw);
   return {
     publisher: accountView(account),
-    /** Calculated only from market data and proofs of trade. There is no self-reported or reputation figure. */
-    score: {
-      accuracy: accuracy(versions.map((v) => evaluateThesis(ctx, v))),
-      borrowers: trackRecord(borrowerTrades),
-    },
+    score: creatorScore(ctx, account.id),
     stats: {
       insights: insightCount,
       reads: readCount,
@@ -149,8 +162,9 @@ export function publisherProfile(ctx: Ctx, nearAccountId: string) {
 }
 
 /**
- * Serves the approved conversation with its conditions. Reading is always free, including after the
- * expiry. Each read is logged with a zero charge.
+ * Serves the approved conversation with its conditions. It needs an active subscription, except for the
+ * thesis's own creator; the abstract (previewView) is free. Each read is logged with a zero charge, because
+ * the subscription already covers it, including reads after the expiry.
  */
 export function readInsight(ctx: Ctx, principal: Principal, tokenId: string) {
   requireScope(principal, "read");
@@ -158,6 +172,7 @@ export function readInsight(ctx: Ctx, principal: Principal, tokenId: string) {
     throw forbidden("token_not_in_scope", `This API key is limited to tokens: ${principal.tokenIds.join(", ")}`);
   }
   const row = getVersion(ctx, tokenId);
+  const subscription = row.creator_id === principal.account.id ? null : requireSubscription(ctx, principal);
   ctx.db.prepare("INSERT INTO reads (id, token_id, reader_id, key_id, charged_yocto, created_at) VALUES (?, ?, ?, ?, '0', ?)")
     .run(newId("read"), tokenId, principal.account.id, principal.keyId, nowIso());
   // Yocto amounts exceed SQLite's 64-bit integers, so sum them as BigInt.
@@ -171,6 +186,8 @@ export function readInsight(ctx: Ctx, principal: Principal, tokenId: string) {
     integrity: integrity(row),
     charge: amount(0n),
     your_reads: { count: charges.length, total_charged: amount(total) },
+    /** null when the creator reads their own thesis. */
+    subscription: subscription && { subscribed_until: subscription.ends_at },
   };
 }
 
@@ -403,8 +420,11 @@ function expiryView(r: VersionRow) {
   };
 }
 
-/** Public: what was published, in which market and direction, and until when. No entry, invalidation or messages. */
-function previewView(ctx: Ctx, r: VersionRow) {
+/**
+ * The abstract, public and free: what was published, in which market and direction, until when, and the
+ * author's score. The entry, invalidation, target, price levels and messages need a subscription.
+ */
+function previewView(ctx: Ctx, r: VersionRow, score = creatorScore(ctx, r.creator_id)) {
   const creator = getAccount(ctx, r.creator_id);
   return {
     token_id: r.token_id,
@@ -420,9 +440,10 @@ function previewView(ctx: Ctx, r: VersionRow) {
     expiry: expiryView(r),
     message_count: (JSON.parse(r.messages) as unknown[]).length,
     creator: accountView(creator),
+    author_score: score,
     payout_account: r.payout_account,
     fee_per_filled_order: amount(r.fee_yocto),
-    read_fee: amount(0n),
+    unlock: subscriptionTerms(ctx),
     content_hash: r.content_hash,
     mint: { ledger: ctx.ledger.kind, tx: r.mint_tx },
     created_at: r.created_at,

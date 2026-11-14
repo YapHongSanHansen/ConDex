@@ -25,6 +25,12 @@ export interface Ledger {
     amountYocto: bigint;
   }): { tx: string };
 
+  /**
+   * Charges a subscription to ConDex: moves `amount` from the payer's available balance to the treasury.
+   * Calling it again with the same subscription id returns the original tx and charges nothing.
+   */
+  chargeSubscription(input: { subscriptionId: string; payer: string; payee: string; amountYocto: bigint }): { tx: string };
+
   /** Pays the reserved fee to the payee. Calling it again for the same order returns the original tx. */
   settleFee(orderId: string, receiptId: string): { tx: string; alreadyFinal: boolean };
 

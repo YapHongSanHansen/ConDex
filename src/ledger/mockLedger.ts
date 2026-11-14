@@ -89,6 +89,30 @@ export class MockLedger implements Ledger {
     });
   }
 
+  chargeSubscription(input: { subscriptionId: string; payer: string; payee: string; amountYocto: bigint }) {
+    return transaction(this.db, () => {
+      const existing = this.db.prepare("SELECT tx FROM ledger_subscriptions WHERE subscription_id = ?").get(input.subscriptionId) as
+        | { tx: string } | undefined;
+      if (existing) return { tx: existing.tx };
+      const payer = this.balanceOf(input.payer);
+      if (payer.availableYocto < input.amountYocto) {
+        throw paymentRequired(
+          "insufficient_balance",
+          `${input.payer} has ${payer.availableYocto} yocto available but the subscription needs ${input.amountYocto}`,
+        );
+      }
+      this.writeBalance({ ...payer, availableYocto: payer.availableYocto - input.amountYocto });
+      const payee = this.balanceOf(input.payee);
+      this.writeBalance({ ...payee, earnedYocto: payee.earnedYocto + input.amountYocto });
+      const tx = this.recordTx("charge_subscription", {
+        subscription_id: input.subscriptionId, payer: input.payer, payee: input.payee, amount_yocto: input.amountYocto.toString(),
+      });
+      this.db.prepare("INSERT INTO ledger_subscriptions (subscription_id, payer, payee, amount_yocto, tx) VALUES (?, ?, ?, ?, ?)")
+        .run(input.subscriptionId, input.payer, input.payee, input.amountYocto.toString(), tx);
+      return { tx };
+    });
+  }
+
   settleFee(orderId: string, receiptId: string) {
     return this.finalise(orderId, "settled", (reserve) => {
       const payer = this.balanceOf(reserve.payer);
