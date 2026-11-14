@@ -26,7 +26,11 @@ async function hashFor(message: string, nonce: Uint8Array, recipient: string): P
   return crypto.subtle.digest("SHA-256", all);
 }
 
-let cached: Promise<{ signMessage: NearWalletBase["signMessage"] }> | null = null;
+/** The stand-in wallet sends nothing on chain. It records each transaction it was asked to sign so a test can check it. */
+export interface DevTx { receiverId: string; method: string; args: unknown; deposit: string }
+declare global { interface Window { __condexTxs?: DevTx[] } }
+
+let cached: Promise<{ signMessage: NearWalletBase["signMessage"]; signAndSendTransaction: (p: { receiverId: string; actions: Array<{ functionCall?: { methodName: string; args: unknown; deposit: bigint } }> }) => Promise<{ transaction_outcome: { id: string } }> }> | null = null;
 
 export function devWallet(accountId: string) {
   cached ??= (async () => {
@@ -36,6 +40,13 @@ export function devWallet(accountId: string) {
       signMessage: async ({ message, nonce, recipient }: { message: string; nonce: Uint8Array; recipient: string }) => {
         const sig = new Uint8Array(await crypto.subtle.sign("Ed25519", keys.privateKey, await hashFor(message, nonce, recipient)));
         return { accountId, publicKey, signature: btoa(String.fromCharCode(...sig)) };
+      },
+      signAndSendTransaction: async ({ receiverId, actions }) => {
+        const fc = actions[0] as unknown as { params?: { methodName: string; args: Uint8Array | object; deposit: bigint } } & { functionCall?: { methodName: string; args: unknown; deposit: bigint } };
+        const p = fc.params ?? fc.functionCall;
+        const args = p && "args" in p && p.args instanceof Uint8Array ? JSON.parse(new TextDecoder().decode(p.args)) : p?.args;
+        (window.__condexTxs ??= []).push({ receiverId, method: p?.methodName ?? "?", args, deposit: String(p?.deposit ?? 0) });
+        return { transaction_outcome: { id: `devtx${(window.__condexTxs?.length ?? 0)}` } };
       },
     };
   })();

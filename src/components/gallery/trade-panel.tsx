@@ -15,6 +15,8 @@ import { SignInGate } from "@/components/ui/sign-in-gate";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { DISCLAIMER } from "@/components/layout/page-header";
 import { USE_MOCKS } from "@/lib/config";
+import { DemoVenueLink } from "@/components/keys/demo-venue";
+import { useChainActions } from "@/lib/near/use-chain";
 import { useWallet } from "@/lib/near/connector";
 import { formatDate, formatNear } from "@/lib/utils";
 
@@ -33,9 +35,12 @@ function Subscribe({ account, onDone }: { account: string; onDone: () => void })
   const qc = useQueryClient();
   const sub = useQuery({ queryKey: ["subscription", account], queryFn: () => api.trading.subscription() });
   const bal = useQuery({ queryKey: ["balances", account], queryFn: () => api.trading.balances(account) });
+  const chain = useChainActions();
   const pay = useMutation({
     mutationFn: async () => {
       const fee = sub.data!.terms.fee;
+      // On NEAR the trader signs subscribe() from their own wallet with the price attached. On the mock ledger the backend takes it from the balance.
+      if (chain.onChain) return chain.subscribe(fee.yocto, account);
       const have = Number(bal.data?.available.near ?? 0);
       if (have < Number(fee.near)) await api.trading.deposit(String(Number(fee.near) - have));
       return api.trading.subscribe();
@@ -55,7 +60,7 @@ function Subscribe({ account, onDone }: { account: string; onDone: () => void })
       <p className="flex items-center gap-2 font-medium"><Lock className="h-4 w-4" aria-hidden />The full thesis is locked</p>
       <p className="text-sm text-muted">The entry, invalidation and conversation unlock with a ConDex subscription: {formatNear(fee)} for {sub.data!.terms.period_days} days, for every thesis. Trading below needs no subscription.</p>
       <Button variant="primary" className="w-full" loading={pay.isPending} onClick={() => pay.mutate()}>Subscribe · {formatNear(fee)}</Button>
-      <p className="text-center font-mono text-[11px] text-muted">Balance {bal.data ? formatNear(Number(bal.data.available.near)) : "…"} · paid to {sub.data!.terms.paid_to}</p>
+      <p className="text-center font-mono text-[11px] text-muted">{chain.onChain ? "Signed in your wallet" : `Balance ${bal.data ? formatNear(Number(bal.data.available.near)) : "…"}`} · paid to {sub.data!.terms.paid_to}</p>
       {pay.isError && <ErrorLine error={pay.error} />}
     </div>
   );
@@ -92,8 +97,10 @@ function Trade({ insight, account }: { insight: InsightDetail; account: string }
   const qtyError = !qty || !(Number(qty) > 0) ? "Enter a quantity above 0." : null;
   const own = insight.creator === account;
   const bal = useQuery({ queryKey: ["balances", account], queryFn: () => api.trading.balances(account) });
+  const chain = useChainActions();
+  const topUp = String(Math.max(1, Math.ceil(insight.price)));
   const addFunds = useMutation({
-    mutationFn: () => api.trading.deposit(String(Math.max(1, Math.ceil(insight.price)))),
+    mutationFn: async () => { if (chain.onChain) await chain.deposit(topUp); else await api.trading.deposit(topUp); },
     onSuccess: () => { toast.success("Test NEAR added to your balance"); qc.invalidateQueries({ queryKey: ["balances"] }); },
   });
   const short = !!bal.data && Number(bal.data.available.near) < insight.price;
@@ -102,11 +109,14 @@ function Trade({ insight, account }: { insight: InsightDetail; account: string }
   const place = useMutation({
     mutationFn: () => api.trading.placeOrder({ quote_id: quote!.quote_id, side, quantity: qty, authorise_fee: true }),
     onSuccess: (o) => {
-      toast.success("Order placed. The fee is reserved until it fills.");
+      toast.success(o.status === "awaiting_approval" ? "Order linked. Approve the fee in your wallet." : "Order placed. The fee is reserved until it fills.");
       setPlaced(o); setQuote(null);
       for (const k of ["orders", "proof", "balances"]) qc.invalidateQueries({ queryKey: [k] });
+      // On NEAR the wallet opens straight away. If it is closed, the button below asks again.
+      if (o.status === "awaiting_approval") approve.mutate(o);
     },
   });
+  const approve = useMutation({ mutationFn: (o: Order) => chain.approve(o), onSuccess: (o) => setPlaced(o) });
   const sim = useMutation({
     mutationFn: () => api.trading.simulate!(placed!.id, "fill"),
     onSuccess: async () => { setPlaced(await api.trading.getOrder(placed!.id)); for (const k of ["orders", "proof", "balances"]) qc.invalidateQueries({ queryKey: [k] }); },
@@ -122,12 +132,19 @@ function Trade({ insight, account }: { insight: InsightDetail; account: string }
       <div className="space-y-3 rounded-md border border-border p-4 text-sm" role="status">
         <div className="flex items-center justify-between gap-2"><p className="font-mono">{o.id}</p><StatusBadge status={o.status} /></div>
         <p className="text-muted">{o.side} {o.quantity} {o.market}. Fee {formatNear(Number(o.fee.near))}: {o.settlement.status === "settled" ? "charged once and paid to the creator." : "reserved, and charged once when the order first fills. No fill, no fee."}</p>
-        {o.status === "awaiting_approval" && <p className="text-warning">Approve the fee in your wallet to submit this order.</p>}
+        {o.status === "awaiting_approval" && (
+          <div className="space-y-2 rounded-md border border-warning/50 p-3">
+            <p className="text-warning">The fee is not reserved yet. Approve it in your wallet to submit this order.</p>
+            <Button variant="primary" size="sm" loading={approve.isPending} onClick={() => approve.mutate(o)}>Approve the fee in your wallet</Button>
+            {approve.isError && <ErrorLine error={approve.error} />}
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           <Button asChild variant="primary" size="sm"><Link href="/keys?tab=orders">{filled ? "Close the trade" : "Track it in Your orders"}</Link></Button>
           {USE_MOCKS && api.trading.simulate && o.status !== "filled" && <Button variant="ghost" size="sm" loading={sim.isPending} onClick={() => sim.mutate()}>Simulate a fill (demo)</Button>}
           <Button variant="ghost" size="sm" onClick={() => setPlaced(null)}>New order</Button>
         </div>
+        {!USE_MOCKS && o.status === "open" && <DemoVenueLink orderId={o.id} />}
         {sim.isError && <ErrorLine error={sim.error} />}
       </div>
     );
@@ -141,7 +158,7 @@ function Trade({ insight, account }: { insight: InsightDetail; account: string }
       {short && (
         <div className="space-y-2 rounded-md border border-warning/50 p-3 text-sm">
           <p className="text-warning">Your balance ({bal.data ? formatNear(Number(bal.data.available.near)) : "…"}) is below the fee.</p>
-          <Button variant="secondary" size="sm" loading={addFunds.isPending} onClick={() => addFunds.mutate()}>Add {formatNear(Math.max(1, Math.ceil(insight.price)))} test NEAR</Button>
+          <Button variant="secondary" size="sm" loading={addFunds.isPending} onClick={() => addFunds.mutate()}>{chain.onChain ? "Deposit" : "Add"} {formatNear(Number(topUp))} {chain.onChain ? "to the contract" : "test NEAR"}</Button>
           {addFunds.isError && <ErrorLine error={addFunds.error} />}
         </div>
       )}

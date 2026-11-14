@@ -10,6 +10,8 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { USE_MOCKS } from "@/lib/config";
+import { DemoVenueLink } from "./demo-venue";
+import { useChainActions } from "@/lib/near/use-chain";
 import { formatDate, formatNear } from "@/lib/utils";
 
 function Timeline({ o }: { o: Order }) {
@@ -42,6 +44,8 @@ export function OrderDrawer({ order, onClose }: { order: Order | null; onClose: 
     mutationFn: () => api.trading.closeOrder(order!.id, { quantity: qty.trim() || null }),
     onSuccess: refresh,
   });
+  const chain = useChainActions();
+  const approve = useMutation({ mutationFn: () => chain.approve(order!), onSuccess: refresh });
   const sim = useMutation({
     mutationFn: async (kind: "fill" | "close") => {
       if (kind === "fill") return api.trading.simulate!(order!.id, "fill");
@@ -52,7 +56,7 @@ export function OrderDrawer({ order, onClose }: { order: Order | null; onClose: 
     onSuccess: refresh,
   });
   const dismiss = () => { setQty(""); close.reset(); sim.reset(); onClose(); };
-  const err = close.isError ? friendlyError(toApiError(close.error)) : sim.isError ? friendlyError(toApiError(sim.error)) : null;
+  const err = close.isError ? friendlyError(toApiError(close.error)) : approve.isError ? friendlyError(toApiError(approve.error)) : sim.isError ? friendlyError(toApiError(sim.error)) : null;
   const canClose = !!order?.trade && order.trade.status !== "closed" && Number(order.trade.open_quantity) > 0 && !order.closing_orders.some((c) => c.status === "open" || c.status === "submitted");
   const pendingClose = order?.closing_orders.find((c) => c.status === "open" || c.status === "submitted");
   const dev = USE_MOCKS && !!api.trading.simulate;
@@ -66,7 +70,12 @@ export function OrderDrawer({ order, onClose }: { order: Order | null; onClose: 
             <Timeline o={order} />
             <p className="rounded-md border border-border p-3 text-sm text-muted">The fee depends on the fill, not on the result. A loss still counts in the creator&apos;s record, and closing a trade costs nothing.</p>
 
-            {order.status === "awaiting_approval" && <p role="status" className="text-sm text-warning">This order waits for you to approve the fee in your wallet.</p>}
+            {order.status === "awaiting_approval" && (
+              <div role="status" className="space-y-2 rounded-md border border-warning/50 p-3 text-sm">
+                <p className="text-warning">This order waits for you to approve the fee in your wallet. Nothing is reserved until you do.</p>
+                <Button variant="primary" size="sm" loading={approve.isPending} onClick={() => approve.mutate()}>Approve the fee in your wallet</Button>
+              </div>
+            )}
             {canClose && (
               <div className="space-y-2 border-t border-border pt-5">
                 <h3 className="label-caps">Close the position</h3>
@@ -76,6 +85,7 @@ export function OrderDrawer({ order, onClose }: { order: Order | null; onClose: 
               </div>
             )}
             {pendingClose && <p role="status" className="text-sm text-muted">Closing order {pendingClose.id} is {pendingClose.status}.</p>}
+            {!dev && (order.status === "open" || order.status === "submitted" || !!pendingClose) && <DemoVenueLink orderId={pendingClose?.id ?? order.id} />}
             {dev && (order.status === "open" || order.status === "submitted" || pendingClose) && (
               <div className="space-y-2 border-t border-border pt-5">
                 <h3 className="label-caps">Demo venue</h3>

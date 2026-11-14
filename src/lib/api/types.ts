@@ -167,6 +167,10 @@ export interface TradingApi {
   listOrders(): Promise<Order[]>;
   getOrder(orderId: string): Promise<Order>;
   /** Mock-only helper: drives a pretend venue. The real backend refuses proxied simulation calls, so a real fill comes from the execution route. */
+  /** Which ledger the backend runs on, and its contract when it is NEAR. */
+  ledger(): Promise<{ kind: "mock" | "near"; contractId: string | null }>;
+  /** After the trader signed `reserve_fee`: the backend checks it on chain and submits the order. */
+  confirmApproval(orderId: string): Promise<Order>;
   simulate?(orderId: string, action: "fill" | "cancel" | "reject", body?: { price?: string; quantity?: string }): Promise<unknown>;
 }
 

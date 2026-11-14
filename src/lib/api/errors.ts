@@ -27,7 +27,7 @@ const FRIENDLY: Record<ApiErrorCode, { title: string; next: string }> = {
   not_found: { title: "We couldn't find that.", next: "It may have been removed. Go back to the gallery." },
   validation: { title: "Some details need fixing.", next: "Check the highlighted fields and try again." },
   unauthorized: { title: "Connect your testnet wallet first.", next: "Use the Connect testnet wallet button at the top." },
-  contract_not_configured: { title: "The NEAR contract isn't set up yet.", next: "The team still needs to set NEXT_PUBLIC_CONTRACT_ID." },
+  contract_not_configured: { title: "The NEAR contract isn't set up yet.", next: "The backend did not say which contract to use. Check that it runs with CONDEX_LEDGER=near." },
   wallet_rejected: { title: "The wallet transaction was cancelled.", next: "Nothing was reserved or charged. You can try again." },
   server_error: { title: "Something went wrong on our side.", next: "Try again in a moment." },
   unknown: { title: "Something unexpected happened.", next: "Try again. If it keeps happening, tell the team." },

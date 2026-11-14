@@ -350,6 +350,15 @@ export interface ClosingOrder {
   updated_at: string;
 }
 
+/** The reserve_fee call the trader signs to approve an order on the NEAR ledger. */
+export interface OrderApproval {
+  contract: string;
+  method: string;
+  args: { order_id: string; token_id: string; fee: string; order_hash: string };
+  /** What to call next, once the transaction is signed. */
+  then: string;
+}
+
 /** POST /v1/orders and GET /v1/orders/:id */
 export interface Order {
   id: string; // ord_...
@@ -375,7 +384,7 @@ export interface Order {
   };
   fee: Money;
   /** On NEAR, the approval the trader still has to sign. null on the mock ledger. */
-  approval: unknown;
+  approval: OrderApproval | null;
   settlement: {
     status: "pending" | "settled" | "released" | string;
     receipt_id: string | null;
@@ -424,6 +433,8 @@ export interface Health {
   wallet_key_check: string;
   storage: "memory" | "file";
   expiry_ai: boolean;
+  /** The NEAR contract, only when the backend runs on the NEAR ledger. */
+  contract_id?: string;
   /** Dev mode, same machine only: the MCP server path, with the home folder shown as $HOME. */
   mcp_server?: string;
 }

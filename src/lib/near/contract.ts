@@ -1,50 +1,25 @@
 import { actions, nearToYocto } from "near-api-js";
 import type { NearWalletBase } from "@hot-labs/near-connect";
 import { ApiError, toApiError } from "@/lib/api/errors";
-// @mock-remove-start
-import { USE_MOCKS } from "@/lib/config";
-// @mock-remove-end
-import { CONTRACT_ID } from "@/lib/config";
+import type { Order } from "@/lib/api/wire";
 
-// PROPOSED: align with deployed contract. Method names and argument shapes
-// below are guesses until the NEAR contract exists.
+// The calls the trader signs on the ConDex contract when the backend runs on the NEAR ledger (CONDEX_LEDGER=near).
+// Method names and arguments are the deployed contract's: deposit(), subscribe(), reserve_fee(order_id, token_id, fee,
+// order_hash). The backend never signs for the trader: it checks these on chain, then goes on.
 
 const GAS = BigInt("30000000000000"); // 30 TGas
-
-export interface RegisterInsightArgs {
-  version_hash: string;
-  payout_account: string;
-  fee: string; // yoctoNEAR
-  expires_at_ms: number;
-}
-export interface ReserveFeeArgs {
-  borrow_id: string;
-  insight_id: string;
-  cap: string; // yoctoNEAR
-}
 
 export interface TxResult {
   txHash: string;
 }
 
-async function call(
-  wallet: NearWalletBase | null,
-  methodName: string,
-  args: object,
-  depositNear: number,
-): Promise<TxResult> {
-  // @mock-remove-start
-  if (USE_MOCKS && !CONTRACT_ID) {
-    await new Promise((r) => setTimeout(r, 900));
-    return { txHash: `MOCKTX${Date.now()}NOTAREALTRANSACTION` };
-  }
-  // @mock-remove-end
-  if (!CONTRACT_ID) throw new ApiError("contract_not_configured", "NEXT_PUBLIC_CONTRACT_ID is empty");
+async function call(wallet: NearWalletBase | null, contractId: string, methodName: string, args: object, depositYocto: bigint): Promise<TxResult> {
+  if (!contractId) throw new ApiError("contract_not_configured", "The backend did not report its contract id");
   if (!wallet) throw new ApiError("unauthorized", "Wallet not connected");
   try {
     const outcome = await wallet.signAndSendTransaction({
-      receiverId: CONTRACT_ID,
-      actions: [actions.functionCall(methodName, args, GAS, nearToYocto(depositNear))],
+      receiverId: contractId,
+      actions: [actions.functionCall(methodName, args, GAS, depositYocto)],
     });
     return { txHash: outcome.transaction_outcome.id };
   } catch (e) {
@@ -52,31 +27,15 @@ async function call(
   }
 }
 
-export function registerInsight(
-  wallet: NearWalletBase | null,
-  p: { versionHash: string; payoutAccount: string; feeNear: number; expiresAt: string },
-) {
-  const args: RegisterInsightArgs = {
-    version_hash: p.versionHash,
-    payout_account: p.payoutAccount,
-    fee: nearToYocto(p.feeNear).toString(),
-    expires_at_ms: new Date(p.expiresAt).getTime(),
-  };
-  return call(wallet, "register_insight", args, 0);
-}
+/** Adds test NEAR to the trader's balance in the contract. The fee for an order is reserved from this balance. */
+export const depositToContract = (wallet: NearWalletBase | null, contractId: string, amountNear: string) =>
+  call(wallet, contractId, "deposit", {}, BigInt(nearToYocto(amountNear as `${number}`)));
 
-export function reserveFee(
-  wallet: NearWalletBase | null,
-  p: { borrowId: string; insightId: string; capNear: number },
-) {
-  const args: ReserveFeeArgs = {
-    borrow_id: p.borrowId,
-    insight_id: p.insightId,
-    cap: nearToYocto(p.capNear).toString(),
-  };
-  // The cap is attached as the deposit so it is reserved at borrow time.
-  return call(wallet, "reserve_fee", args, p.capNear);
-}
+/** Pays one subscription period. The price is attached to the call. */
+export const subscribeOnContract = (wallet: NearWalletBase | null, contractId: string, priceYocto: string) =>
+  call(wallet, contractId, "subscribe", {}, BigInt(priceYocto));
 
-// PROPOSED view call for receipts: `get_receipts({ creator })`. Not wired yet;
-// receipts currently come from GET /v1/creators/me/receipts.
+/** Approves one order and its fee: the arguments are exactly what the backend put in the order's `approval`. */
+export function approveFeeOnContract(wallet: NearWalletBase | null, approval: NonNullable<Order["approval"]>) {
+  return call(wallet, approval.contract, approval.method, approval.args, BigInt(0));
+}

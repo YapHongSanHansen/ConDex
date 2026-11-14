@@ -1,5 +1,6 @@
 import { request } from "./client";
 import type { TradingApi } from "./types";
+import type { Health } from "./wire";
 
 const id = encodeURIComponent;
 
@@ -15,5 +16,10 @@ export const tradingApi: TradingApi = {
   placeOrder: (body) => request("/v1/orders", { method: "POST", body }),
   closeOrder: (orderId, body) => request(`/v1/orders/${id(orderId)}/close`, { method: "POST", body }),
   listOrders: async () => (await request<{ orders: import("./wire").Order[] }>("/v1/orders")).orders,
+  ledger: async () => {
+    const h = await request<Health>("/health");
+    return { kind: h.ledger === "near" ? "near" : "mock", contractId: h.contract_id ?? null };
+  },
+  confirmApproval: (orderId) => request(`/v1/orders/${id(orderId)}/confirm-approval`, { method: "POST" }),
   getOrder: (orderId) => request(`/v1/orders/${id(orderId)}`),
 };

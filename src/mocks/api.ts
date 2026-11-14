@@ -216,6 +216,8 @@ export const MOCK_API: Api = {
         o.closing_orders.push(c);
         return structuredClone(c);
       }),
+    ledger: () => delay(() => ({ kind: "mock" as const, contractId: null }), false),
+    confirmApproval: (id) => delay(() => structuredClone(findOrder(id)), false),
     listOrders: () => delay(() => structuredClone(orders)),
     getOrder: (id) => delay(() => structuredClone(findOrder(id))),
     simulate: (id, action) =>

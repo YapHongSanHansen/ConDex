@@ -9,6 +9,20 @@ function fromBase64(text: string): Uint8Array {
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
 
+/**
+ * The backend signs sign-ins for one site name (CONDEX_AUTH_RECIPIENT). A wallet signs for that name, so a different
+ * site could replay the signature elsewhere. On the real site the name must be this site's own, and if it is not the
+ * operator has misconfigured the backend, so say so plainly instead of failing later with an unexplained error.
+ * Locally the backend names itself (localhost:8787) while the site runs on another port, so this is not enforced there.
+ */
+function assertRecipientIsThisSite(recipient: string) {
+  if (process.env.NODE_ENV !== "production" || typeof window === "undefined") return;
+  const { host, hostname } = window.location;
+  if (recipient !== host && recipient !== hostname) {
+    throw new Error(`ConDex's backend signs sign-ins for "${recipient}", but this site is "${host}". The operator needs to set CONDEX_AUTH_RECIPIENT=${hostname}.`);
+  }
+}
+
 /** The stored session, but only if it belongs to the wallet that is connected right now. */
 export function sessionFor(accountId: string | null): StoredSession | null {
   const s = getSession();
@@ -21,6 +35,7 @@ export function sessionFor(accountId: string | null): StoredSession | null {
  */
 export async function signInToBackend(wallet: Pick<NearWalletBase, "signMessage"> | null, accountId: string): Promise<StoredSession> {
   const challenge = await api.auth.challenge();
+  assertRecipientIsThisSite(challenge.recipient);
   let signed = { accountId, publicKey: "", signature: "" };
   // @mock-remove-start
   if (USE_MOCKS) signed = { accountId, publicKey: "ed25519:MOCK", signature: "MOCK" };
