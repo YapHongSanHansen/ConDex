@@ -11,7 +11,12 @@ const COLUMNS: { title: string; links: { label: string; href: string; external?:
 export function Footer() {
   return (
     <footer className="relative mt-24 overflow-hidden border-t border-border">
-      <div className="container-wide relative z-10 pt-14 pb-10">
+      {/* The brand word is the footer's background: centred behind the content, taking no height of its own. */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 z-0 flex select-none items-center justify-center overflow-hidden font-semibold leading-none tracking-tighter"
+        style={{ fontSize: "clamp(110px, 25vw, 400px)", color: "transparent", WebkitTextStroke: "1px color-mix(in srgb, var(--text) 13%, transparent)" }}>
+        ConDex
+      </div>
+      <div className="container-wide relative z-10 py-14">
         <div className="grid gap-10 lg:grid-cols-[1.4fr_2.6fr]">
           <div className="space-y-4">
             <Link href="/" className="inline-block text-[19px] font-semibold tracking-tight">Con<span className="font-light text-muted">Dex</span></Link>
@@ -41,9 +46,6 @@ export function Footer() {
           <p className="max-w-3xl leading-relaxed">Theses are reasoning shared by creators, not financial advice. No performance is implied. Fills come from the execution route ConDex is connected to, and ConDex itself is trusted in this prototype. Testnet only: never use real funds.</p>
           <p className="font-mono">© 2026 ConDex · v0.1.0</p>
         </div>
-      </div>
-      <div aria-hidden className="pointer-events-none relative z-0 -mt-2 select-none overflow-hidden text-center font-semibold leading-[0.8] tracking-tighter" style={{ fontSize: "clamp(110px, 24vw, 380px)", height: "0.72em", color: "transparent", WebkitTextStroke: "1px color-mix(in srgb, var(--text) 9%, transparent)", maskImage: "linear-gradient(to bottom, transparent 0%, #000 40%, #000 100%)" }}>
-        ConDex
       </div>
     </footer>
   );
