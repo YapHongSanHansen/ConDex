@@ -252,7 +252,9 @@ node scripts/testnet-flow.ts   # one full trade through the API on testnet
 
 `npm start` and `npm run dev` read a git-ignored `.env` file if there is one, for settings such as `CONDEX_LLM_API_KEY`.
 
-**Data lives in memory.** Nothing is written to disk, and everything (sign-ins, API keys, published insights, orders, mock balances) starts empty whenever the server restarts, including each automatic restart of `npm run dev`. After a restart, reconnect your wallet (one click) and create a new MCP key; the test console notices the ended session and says so, and **Run every button** sets the test data up again. To keep data between restarts instead, set `CONDEX_DB_PATH=data/condex.db` (a local SQLite file, built into Node).
+**Data lives in memory.** To keep it between restarts while developing, run `npm run dev:keep` instead of `npm run dev`: it saves everything (published theses, keys, sign-ins) to `data/condex.db`, which git ignores. Delete that file to start fresh.
+
+By default, with `npm run dev`: Nothing is written to disk, and everything (sign-ins, API keys, published insights, orders, mock balances) starts empty whenever the server restarts, including each automatic restart of `npm run dev`. After a restart, reconnect your wallet (one click) and create a new MCP key; the test console notices the ended session and says so, and **Run every button** sets the test data up again. To keep data between restarts instead, set `CONDEX_DB_PATH=data/condex.db` (a local SQLite file, built into Node).
 
 The test console has a button for most API actions and demo checklist items. It has none yet for recording market prices or reporting a close event; `npm test` covers those. **Run every button** resets the data, clicks each one in order and reports pass or fail.
 
