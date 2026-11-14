@@ -1,4 +1,3 @@
-export const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 // Where the app sends API calls. "/backend" is a path on this site that Next forwards to the backend (see next.config.ts),
 // so the browser needs no CORS. A full URL also works if the backend allows this site's origin.
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/backend";

@@ -94,9 +94,7 @@ export function CreatorSetup() {
   });
   const revoke = useMutation({ mutationFn: (id: string) => api.keys.revoke(id), onSuccess: refresh });
   const disconnect = useMutation({ mutationFn: () => api.keys.disconnectMcp(), onSuccess: () => { setIssued(null); refresh(); } });
-  const hello = useMutation({ mutationFn: (id: string) => api.keys.simulateMcpHello!(id), onSuccess: refresh });
   const toggle = (s: Scope) => setScopes((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
-  const newest = issued?.id ?? active[0]?.id ?? null;
 
   return (
     <section aria-labelledby="creator-setup" className="space-y-6">
@@ -192,9 +190,6 @@ export function CreatorSetup() {
               <Button variant="secondary" size="sm" loading={disconnect.isPending} onClick={() => disconnect.mutate()}>Disconnect Claude Code</Button>
               <p className="text-xs text-muted">Disconnecting revokes your MCP keys. Claude Code keeps its settings, but every call it makes now fails.</p>
             </div>
-          )}
-          {!connected && newest && api.keys.simulateMcpHello && (
-            <Button variant="secondary" size="sm" loading={hello.isPending} onClick={() => hello.mutate(newest)}>Simulate Claude Code connecting (demo)</Button>
           )}
         </div>
       </div>

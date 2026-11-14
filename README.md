@@ -66,59 +66,33 @@ The planned first demo focuses on borrowing and settlement. A later test-credit 
 
 ## Frontend
 
-### Design note: the frontend follows the product diagram, not the older README prose
-The sections above describe pay-on-first-retrieval and a creator-side chat upload. The frontend instead follows the later flow diagram: wallet → creator API key → Claude Code connected through an MCP server, so **private context is never uploaded**; the creator exports a context with an expiry (optionally including their own PNL, kept private); another agent borrows it; and **the creator is paid when the borrowing agent reports the trade executed**. That report is self-reported and trusted. The README prose above should be aligned by the team.
+Next.js (App Router, React 19) + TypeScript + Tailwind v4. Testnet only. It has no demo data: every page reads from the ConDex backend (branch `backend`) and talks to it through a `/backend` path that Next forwards to `BACKEND_URL`, so the browser needs no CORS.
 
-### What it is
-Next.js (App Router, React 19) + TypeScript + Tailwind v4 app with six pages: Home `/`, Gallery `/gallery`, Insight detail `/gallery/[id]`, Connect your API `/keys`, Payouts `/payouts`, Publish `/publish`. Testnet only. No backend required: it runs on mock data.
+Pages: Home `/`, Gallery `/gallery`, Thesis `/gallery/[id]` (preview, proof, read and trade), Keys & orders `/keys`, Payouts `/payouts`, Publish `/publish`.
 
 ### Run
-1. `npm install`
-2. `cp .env.example .env.local` (mocks are on by default)
-3. `npm run dev` and open http://localhost:3000. Expect a "Demo mode" banner and MOCK badges on all data.
-4. `npm run build` to check a production build; `npm run typecheck` for types.
-5. Browsing needs no wallet. Borrowing, publishing and wallet menus need a NEAR **testnet** wallet via the "Connect testnet wallet" button.
+1. Start the backend (its own folder, Node 24): `npm run dev`. It listens on http://localhost:8787 with in-memory data.
+2. `npm install`
+3. `cp .env.example .env.local` (the defaults point at that backend).
+4. `npm run dev` and open http://localhost:3000.
+5. No NEAR wallet yet? Set `NEXT_PUBLIC_DEV_WALLET=alice.testnet` in `.env.local`: a stand-in wallet signs ConDex's challenge with a key made in the browser. The backend accepts it only in dev mode, and it is ignored in production builds.
+6. `npm run build` checks a production build; `npm run typecheck` and `npm run lint` check the code.
 
 ### Environment variables
 | Name | Purpose |
 | --- | --- |
-| `NEXT_PUBLIC_USE_MOCKS` | `true` uses `src/mocks/`, `false` calls the real API |
-| `NEXT_PUBLIC_API_BASE_URL` | Backend base URL (default `http://localhost:8000`) |
-| `NEXT_PUBLIC_MOCK_FAIL_RATE` | 0 to 1, chance a mock call fails (tests error states) |
+| `NEXT_PUBLIC_API_BASE_URL` | Where the browser calls the API. Default `/backend` (forwarded to `BACKEND_URL`). A full URL works if the backend lists this site in `CONDEX_CORS_ORIGINS`. |
+| `BACKEND_URL` | Where Next forwards `/backend/*`. Server side only. Default `http://localhost:8787`. |
+| `NEXT_PUBLIC_MCP_API_URL` | The backend address Claude Code's MCP server uses. A real URL, never the proxy path. |
+| `NEXT_PUBLIC_MCP_SERVER_PATH` | Starting text for the path to the backend's `src/mcp/server.ts` on the Keys page. |
+| `NEXT_PUBLIC_DEV_WALLET` | Development only: act as this NEAR account without a wallet. |
 | `NEXT_PUBLIC_NEAR_NETWORK` | `testnet` (the app is testnet-only regardless) |
-| `NEXT_PUBLIC_CONTRACT_ID` | Deployed contract. Empty: mock mode fakes the transaction; real mode shows "contract not set up" |
-| `NEXT_PUBLIC_EXPLORER_TX_URL` | Explorer tx prefix. VERIFY before relying on it |
+| `NEXT_PUBLIC_EXPLORER_TX_URL` | Explorer transaction prefix. |
 
 ### Folder map
 - `src/app/` routes
-- `src/components/{layout,home,gallery,keys,payouts,publish,ui}/` UI by page, `ui/` holds hand-written shadcn-style primitives on Radix
-- `src/lib/api/` typed client: `types.ts` is the contract; `client.ts`, `insights.ts`, `borrows.ts`, `creators.ts`; `index.ts` picks real or mock
-- `src/lib/near/` `connector.tsx` (wallet context and `useWallet()`), `contract.ts` (proposed contract calls)
-- `src/mocks/` all mock data and logic, each file starts with `// @mock-remove`
-- `docs/API_CONTRACT.md`, `docs/BACKEND_CONNECTION.md`
-- `scripts/check-mocks.mjs` run with `npm run check:mocks`
+- `src/components/{layout,home,gallery,keys,payouts,publish,ui}/` UI by page; `ui/` holds hand-written shadcn-style primitives on Radix
+- `src/lib/api/` typed client: `wire.ts` is what the backend sends, `types.ts` is what the pages use, `adapters.ts` converts between them
+- `src/lib/near/` wallet connector, sign-in, and the wallet calls used on the NEAR ledger
 
-### Switch from mocks to the backend
-Follow `docs/BACKEND_CONNECTION.md`. Short version: set env vars, `npm run check:mocks`, delete `src/mocks/`, remove `@mock-remove-start/end` blocks, confirm MOCK badges are gone, test each page.
-
-### Known limitations
-- Only `GET /v1/borrows/{borrow_id}/insight` is defined by this README; every other endpoint, the contract methods and the `condex-mcp` package/command are proposals. No MCP server exists in this repo.
-- Retrieval from a creator's local MCP is not designed yet (relay? offline?). See `docs/API_CONTRACT.md`.
-- Publish steps 2 to 4 were not exercised in a browser because they need a connected testnet wallet.
-- Auth is not implemented: `TODO(backend): auth scheme` in `src/lib/api/client.ts`. The wallet account id is sent as a plain header.
-- Mock data is for one fixed demo identity; it does not follow the connected wallet.
-- Leaving `/publish` warns on tab close or reload only, not on in-app link clicks.
-- Theme toggle (sun/moon in the nav) is remembered in localStorage; dark is the default.
-- "Includes PNL" is only a private flag on an export. Nothing in the UI displays or claims performance.
-- Borrowing needs a connected wallet even in demo mode.
-- Settlement trusts the API to report deliveries; nothing is verified trustlessly.
-- The long/short insight market is not built.
-- Not tested: a real wallet transaction on testnet, since no contract exists.
-
-### Disclosures
-- Libraries: next, react, @tanstack/react-query, @hot-labs/near-connect, near-api-js, Radix UI (dialog, tabs, tooltip, dropdown-menu, accordion, slider, slot), sonner, lucide-react, class-variance-authority, clsx, tailwind-merge. `@near-wallet-selector/*` is not used.
-- 21st.dev components: none used. The primitives are written by hand.
-- Wallet account id: `accounts[0].accountId` on the `wallet:signIn` event, as documented in the installed `@hot-labs/near-connect` README.
-- ASCII art is original. The visual direction is only a style reference.
-- This frontend was built with AI assistance (Claude Code).
-- Insights are reasoning, not financial advice. No performance is implied.
+How every page maps to a backend route, how the NEAR ledger path works, and what to set for production are in [`docs/BACKEND_LINK.md`](docs/BACKEND_LINK.md).

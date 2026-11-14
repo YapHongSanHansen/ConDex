@@ -6,7 +6,6 @@ import { ExternalLink } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
-import { MockBadge } from "@/components/ui/mock-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { SignInGate } from "@/components/ui/sign-in-gate";
@@ -66,7 +65,7 @@ function Receipts() {
               <td className="px-4 py-3 font-mono">{formatNear(r.fee)}</td>
               <td className="px-4 py-3 text-xs text-muted">{r.evidence}</td>
               <td className="px-4 py-3">
-                <div className="flex items-center gap-2">{r.ledger === "mock" && <MockBadge />}
+                <div className="flex items-center gap-2">
                   {r.ledger === "mock" ? <span className="font-mono text-xs">{truncateHash(r.tx_hash)}</span> : (
                     <a href={`${EXPLORER_TX_URL}${r.tx_hash}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline">{truncateHash(r.tx_hash)}<ExternalLink className="h-3 w-3" aria-label="opens explorer" /></a>
                   )}

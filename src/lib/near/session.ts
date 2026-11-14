@@ -1,8 +1,5 @@
 import type { NearWalletBase } from "@hot-labs/near-connect";
 import { api, getSession, setSession, type StoredSession } from "@/lib/api";
-// @mock-remove-start
-import { USE_MOCKS } from "@/lib/config";
-// @mock-remove-end
 
 function fromBase64(text: string): Uint8Array {
   const bin = atob(text);
@@ -36,15 +33,8 @@ export function sessionFor(accountId: string | null): StoredSession | null {
 export async function signInToBackend(wallet: Pick<NearWalletBase, "signMessage"> | null, accountId: string): Promise<StoredSession> {
   const challenge = await api.auth.challenge();
   assertRecipientIsThisSite(challenge.recipient);
-  let signed = { accountId, publicKey: "", signature: "" };
-  // @mock-remove-start
-  if (USE_MOCKS) signed = { accountId, publicKey: "ed25519:MOCK", signature: "MOCK" };
-  else
-  // @mock-remove-end
-  {
-    if (!wallet) throw new Error("Wallet not ready");
-    signed = await wallet.signMessage({ message: challenge.message, recipient: challenge.recipient, nonce: fromBase64(challenge.nonce) });
-  }
+  if (!wallet) throw new Error("Wallet not ready");
+  const signed = await wallet.signMessage({ message: challenge.message, recipient: challenge.recipient, nonce: fromBase64(challenge.nonce) });
   if (signed.accountId !== accountId) throw new Error(`The wallet signed as ${signed.accountId}, not ${accountId}`);
   const result = await api.auth.verify({ account_id: signed.accountId, public_key: signed.publicKey, signature: signed.signature, nonce: challenge.nonce });
   const session: StoredSession = { token: result.session.token, accountId: result.account.near_account_id, expiresAt: result.session.expires_at };

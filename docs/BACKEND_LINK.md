@@ -9,7 +9,6 @@ This is the map between what the pages call and what the backend (`backend`) ser
 npm run dev                                   # http://localhost:8787, dev mode, in-memory data
 
 # frontend: .env.local
-NEXT_PUBLIC_USE_MOCKS=false
 NEXT_PUBLIC_API_BASE_URL=/backend             # Next forwards /backend/* to BACKEND_URL, so no CORS is needed
 BACKEND_URL=http://localhost:8787
 NEXT_PUBLIC_MCP_API_URL=http://localhost:8787 # what Claude Code's MCP server calls (a real URL, never the proxy)
@@ -21,7 +20,7 @@ npm run dev
 
 ## What is linked and verified against the real backend
 
-Backend branch `backend` (latest, with `GET /v1/stats`). Every page below was run in a real browser against it with mocks off.
+Backend branch `backend` (latest, with `GET /v1/stats`). Every page below was run in a real browser against it. The app has no mock data: it always talks to the backend.
 
 | Page | Frontend call | Backend route | Notes |
 |---|---|---|---|
@@ -64,4 +63,4 @@ The backend sends `{ "error": { "code", "message", "details"? } }`. `client.ts` 
 
 ## How it was checked
 
-Against the real backend (seeded with four theses), in a real browser with mocks off: the home page and gallery loaded real tokens, an insight page showed its versions, the dev wallet signed in through the challenge and verify calls, a key was issued, a client saying hello made the page show "MCP connected" with 11 tools, and Disconnect revoked the key (the backend then answered 401 for it).
+Against the real backend (seeded with four theses), in a real browser: the home page and gallery loaded real tokens, an insight page showed its versions, the dev wallet signed in through the challenge and verify calls, a key was issued, a client saying hello made the page show "MCP connected" with 11 tools, and Disconnect revoked the key (the backend then answered 401 for it).

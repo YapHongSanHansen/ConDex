@@ -6,7 +6,6 @@ import { ArrowLeft, ExternalLink, Lock } from "lucide-react";
 import { api } from "@/lib/api";
 import type { InsightDetail } from "@/lib/api/types";
 import { CopyButton } from "@/components/ui/copy-button";
-import { MockBadge } from "@/components/ui/mock-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/ui/states";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -66,7 +65,7 @@ function Detail({ i }: { i: InsightDetail }) {
         </section>
 
         <section className="space-y-3 rounded-md border border-border bg-surface p-6" aria-label="Registered on NEAR">
-          <div className="flex items-center gap-3"><h2 className="label-caps">On NEAR testnet</h2><MockBadge /></div>
+          <div className="flex items-center gap-3"><h2 className="label-caps">On NEAR testnet</h2></div>
           <div className="space-y-2 text-sm">
             <p className="label-caps">Version hash · creator <span className="normal-case tracking-normal text-text">{i.creator}</span></p>
             <div className="flex flex-wrap items-center gap-3"><code className="break-all font-mono text-xs">{i.version_hash}</code><CopyButton value={i.version_hash} /></div>

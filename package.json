@@ -7,7 +7,6 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check:mocks": "node scripts/check-mocks.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

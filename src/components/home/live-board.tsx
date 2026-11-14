@@ -5,13 +5,12 @@ import { api } from "@/lib/api";
 import { InsightCard } from "@/components/gallery/insight-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/ui/states";
-import { MockBadge } from "@/components/ui/mock-badge";
 
 export function LiveBoard() {
   const q = useQuery({ queryKey: ["insights", "latest"], queryFn: () => api.insights.listInsights({ sort: "newest" }) });
   return (
     <section aria-labelledby="live-board" className="space-y-4">
-      <div className="flex items-center gap-3"><h2 id="live-board" className="text-lg font-semibold">Latest</h2><MockBadge /></div>
+      <div className="flex items-center gap-3"><h2 id="live-board" className="text-lg font-semibold">Latest</h2></div>
       {q.isError ? (
         <ErrorState error={q.error} onRetry={() => q.refetch()} />
       ) : q.isLoading ? (

@@ -1,4 +1,4 @@
-// The shapes the pages use. Mocks and the real client both implement the interfaces at the bottom of this file.
+// The shapes the pages use. The client in this folder implements the interfaces at the bottom of this file.
 // What the backend actually sends is in `wire.ts`, and `adapters.ts` converts between the two.
 
 import type {
@@ -166,12 +166,10 @@ export interface TradingApi {
   closeOrder(orderId: string, body: CloseTradeInput): Promise<ClosingOrder>;
   listOrders(): Promise<Order[]>;
   getOrder(orderId: string): Promise<Order>;
-  /** Mock-only helper: drives a pretend venue. The real backend refuses proxied simulation calls, so a real fill comes from the execution route. */
   /** Which ledger the backend runs on, and its contract when it is NEAR. */
   ledger(): Promise<{ kind: "mock" | "near"; contractId: string | null }>;
   /** After the trader signed `reserve_fee`: the backend checks it on chain and submits the order. */
   confirmApproval(orderId: string): Promise<Order>;
-  simulate?(orderId: string, action: "fill" | "cancel" | "reject", body?: { price?: string; quantity?: string }): Promise<unknown>;
 }
 
 export interface CreatorsApi {
@@ -199,8 +197,6 @@ export interface KeysApi {
   mcpTools(): Promise<McpTool[]>;
   /** Revokes this account's MCP keys. Claude Code keeps its config, but every call now fails. */
   disconnectMcp(): Promise<{ revoked: number }>;
-  /** Mock-only helper: pretends Claude Code started the MCP server with this key. */
-  simulateMcpHello?(keyId: string): Promise<void>;
 }
 
 export interface Api {

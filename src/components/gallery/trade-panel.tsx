@@ -14,7 +14,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SignInGate } from "@/components/ui/sign-in-gate";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { DISCLAIMER } from "@/components/layout/page-header";
-import { USE_MOCKS } from "@/lib/config";
 import { DemoVenueLink } from "@/components/keys/demo-venue";
 import { useChainActions } from "@/lib/near/use-chain";
 import { useWallet } from "@/lib/near/connector";
@@ -117,10 +116,6 @@ function Trade({ insight, account }: { insight: InsightDetail; account: string }
     },
   });
   const approve = useMutation({ mutationFn: (o: Order) => chain.approve(o), onSuccess: (o) => setPlaced(o) });
-  const sim = useMutation({
-    mutationFn: () => api.trading.simulate!(placed!.id, "fill"),
-    onSuccess: async () => { setPlaced(await api.trading.getOrder(placed!.id)); for (const k of ["orders", "proof", "balances"]) qc.invalidateQueries({ queryKey: [k] }); },
-  });
   // The venue confirms the fill later, so the order is checked again every few seconds.
   const live = useQuery({ queryKey: ["order", placed?.id], queryFn: () => api.trading.getOrder(placed!.id), enabled: !!placed, refetchInterval: 3000 });
 
@@ -141,11 +136,9 @@ function Trade({ insight, account }: { insight: InsightDetail; account: string }
         )}
         <div className="flex flex-wrap gap-2">
           <Button asChild variant="primary" size="sm"><Link href="/keys?tab=orders">{filled ? "Close the trade" : "Track it in Your orders"}</Link></Button>
-          {USE_MOCKS && api.trading.simulate && o.status !== "filled" && <Button variant="ghost" size="sm" loading={sim.isPending} onClick={() => sim.mutate()}>Simulate a fill (demo)</Button>}
           <Button variant="ghost" size="sm" onClick={() => setPlaced(null)}>New order</Button>
         </div>
-        {!USE_MOCKS && o.status === "open" && <DemoVenueLink orderId={o.id} />}
-        {sim.isError && <ErrorLine error={sim.error} />}
+        {o.status === "open" && <DemoVenueLink orderId={o.id} />}
       </div>
     );
   }
