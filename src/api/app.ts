@@ -91,6 +91,23 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   app.disable("x-powered-by");
   // Behind a reverse proxy, take the client address from X-Forwarded-For so sign-in limits apply per user.
   if (config.trustProxyHops > 0) app.set("trust proxy", config.trustProxyHops);
+  // Browser access from the website, only for the origins listed in CONDEX_CORS_ORIGINS. The dev routes keep their own
+  // same-machine check and never rely on this. Without a match no CORS header is sent, so the browser refuses the call.
+  app.use((req, res, next) => {
+    const origin = req.get("origin");
+    if (origin && config.corsOrigins.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Max-Age", "600");
+      if (req.method === "OPTIONS") {
+        res.status(204).end();
+        return;
+      }
+    }
+    next();
+  });
   app.use(express.json({ limit: "1mb" }));
 
   /** The caller's address, used to limit sign-in attempts per client. */
@@ -132,6 +149,8 @@ export function createApp(config: Config, deps: AppDeps = {}) {
       storage: config.dbPath === ":memory:" ? "memory" : "file",
       // Whether ConDex's AI sets the expiry of a thesis published without one (otherwise its default applies).
       expiry_ai: ctx.expiryAi !== null,
+      // The NEAR contract the website talks to for deposits, subscriptions and fee approvals. Only on the NEAR ledger.
+      ...(ctx.chain ? { contract_id: ctx.chain.client.contractId } : {}),
       // Only for the test console on this computer: lets it print a ready-to-paste `claude mcp add`
       // command. The home folder is shown as $HOME, and the path is never sent to another machine.
       ...(config.devMode && isSameMachine(req) ? { mcp_server: displayPath(MCP_SERVER_PATH) } : {}),

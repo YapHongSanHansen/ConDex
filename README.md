@@ -408,6 +408,7 @@ Invalid values (a misspelt network, `CONDEX_DEV_MODE=yes`, a timeout of `5m`) st
 | `CONDEX_DB_PATH` | dev: `:memory:` | `:memory:` keeps everything in memory (lost on restart); a file path such as `data/condex.db` keeps it. **Required** outside dev mode, so data is never lost by accident. |
 | `CONDEX_EXECUTION_SECRET` | dev: `dev-execution-secret` | Shared secret the execution integration sends. **Required** outside dev mode, and the public dev value is refused there. |
 | `CONDEX_AUTH_RECIPIENT` | dev: `localhost:<port>` | The website's domain, used as the NEP-413 recipient and in the sign-in message. **Required** outside dev mode. |
+| `CONDEX_CORS_ORIGINS` | none | Comma-separated website origins (for example `https://condex.app`) allowed to call the API from a browser. Leave it empty when the site proxies the API under its own origin. |
 | `CONDEX_ALLOWED_ORIGINS` | dev: `http://localhost:<port>`, `http://127.0.0.1:<port>` | Comma-separated origins a redirect wallet may return to. |
 | `CONDEX_NEAR_NETWORK` | `testnet` | `testnet` or `mainnet`. |
 | `CONDEX_NEAR_RPC_URL` | FastNEAR (`https://test.rpc.fastnear.com` / `https://rpc.mainnet.fastnear.com`) | NEAR RPC used to check wallet keys, the same endpoints near-cli uses. |

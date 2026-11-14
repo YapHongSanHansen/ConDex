@@ -30,6 +30,8 @@ export interface Config {
   authRecipient: string;
   /** Origins a redirect wallet may send the user back to (`callback_url` on sign-in). */
   allowedOrigins: string[];
+  /** Websites whose pages may call this API from a browser (CORS). Empty: none, which is right when the site proxies the API. */
+  corsOrigins: string[];
   challengeTtlSeconds: number;
   sessionTtlSeconds: number;
   /** New sign-in challenges each client address may request per minute. */
@@ -145,6 +147,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     nearRpcUrl: env.CONDEX_NEAR_RPC_URL?.trim() || DEFAULT_RPC[nearNetwork],
     walletKeyCheck,
     authRecipient,
+    corsOrigins: parseOrigins(env, "CONDEX_CORS_ORIGINS") ?? [],
     allowedOrigins: parseOrigins(env, "CONDEX_ALLOWED_ORIGINS")
       ?? (devMode ? [`http://localhost:${port}`, `http://127.0.0.1:${port}`] : []),
     challengeTtlSeconds: parseInteger(env, "CONDEX_CHALLENGE_TTL_SECONDS", 300),
