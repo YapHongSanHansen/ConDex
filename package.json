@@ -1,0 +1,12 @@
+{
+  "name": "condex",
+  "private": true,
+  "description": "ConDex: the API and MCP server (backend/) and the website (frontend/).",
+  "scripts": {
+    "install:all": "npm --prefix backend ci && npm --prefix frontend ci",
+    "dev:backend": "npm --prefix backend run dev:keep",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "test": "npm --prefix backend test",
+    "check": "npm --prefix frontend run typecheck && npm --prefix frontend run lint && npm --prefix frontend run build"
+  }
+}

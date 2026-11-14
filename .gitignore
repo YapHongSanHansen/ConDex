@@ -1,0 +1,5 @@
+# Each folder has its own ignore rules. These are the ones that must never be committed from the top level.
+node_modules/
+.env
+.env.local
+.DS_Store
