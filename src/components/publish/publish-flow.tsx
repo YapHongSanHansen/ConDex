@@ -50,6 +50,27 @@ function Choice({ active, onClick, children }: { active: boolean; onClick: () =>
   );
 }
 
+/** Everything this account has published, read from the backend, so it is still here after a reload. */
+function MyTheses({ account }: { account: string }) {
+  const q = useQuery({ queryKey: ["profile", account], queryFn: () => api.creators.profile(account), retry: false });
+  const tokens = [...(q.data?.tokens ?? [])].sort((a, b) => b.published_at.localeCompare(a.published_at));
+  if (tokens.length === 0) return null;
+  return (
+    <section className="space-y-3" aria-label="Your published theses">
+      <h2 className="label-caps">Your published theses</h2>
+      <ul className="divide-y divide-border rounded-md border border-border bg-surface">
+        {tokens.slice(0, 8).map((t) => (
+          <li key={t.token_id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
+            <Link href={`/gallery/${t.token_id}`} className="font-mono hover:text-accent">{t.market} · v{t.version}</Link>
+            <span className="text-muted">{t.title}</span>
+            <span className="font-mono text-xs text-muted">{t.expired ? "expired" : `expires ${formatDate(t.expires_at)}`}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** What to say in a chat. Claude asks for anything that is missing, so the short version is enough. */
 const QUICK_PROMPT = "Publish this conversation to ConDex as a thesis.";
 const DETAILED_EXAMPLE = `Publish this conversation to ConDex, using the ConDex tool.
@@ -178,6 +199,9 @@ export function PublishFlow() {
   const from = useSearchParams().get("from");
   const [connected, setConnected] = useState(false);
   const [skipped, setSkipped] = useState(false);
+  const { accountId } = useWallet();
+  // What was published is kept by the backend, so it is listed whether or not Claude Code is connected right now.
+  const mine = accountId ? <MyTheses account={accountId} /> : null;
 
   if (connected || skipped) {
     return (
@@ -189,16 +213,18 @@ export function PublishFlow() {
           <Link href="/keys?tab=keys" className="text-muted underline-offset-2 hover:text-text hover:underline">{connected ? "Connection settings" : "Connect it"}</Link>
         </p>
         <PublishPanel from={from} />
+        {mine}
       </div>
     );
   }
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <ConnectClaude onConnected={() => setConnected(true)} />
       <p className="text-sm text-muted">
         Already set up, or just want the words to say?{" "}
         <button type="button" onClick={() => setSkipped(true)} className="cursor-pointer text-text underline underline-offset-2">Skip this</button>
       </p>
+      {mine}
     </div>
   );
 }
