@@ -16,6 +16,8 @@ function filter(items: Insight[], p: ListInsightsParams): Insight[] {
   const out = items.filter((i) => {
     if (p.market && !i.market.toLowerCase().includes(p.market.toLowerCase())) return false;
     if (p.horizon && i.horizon !== p.horizon) return false;
+    if (p.direction && i.direction !== p.direction) return false;
+    if (!p.include_expired && i.status !== "live") return false;
     if (p.max_price !== undefined && i.price > Number(p.max_price)) return false;
     const left = new Date(i.expires_at).getTime() - now;
     if (p.expiry === "soon" && !(left > 0 && left < DAY)) return false;
@@ -39,5 +41,6 @@ export const insightsApi: InsightsApi = {
     const preview = await request<TokenPreview>(`/v1/tokens/${encodeURIComponent(id)}/preview`);
     return tokenToDetail(preview, await allTokens());
   },
+  listMarkets: async () => [...new Set((await allTokens()).map((t) => t.market))].sort(),
   getStats: async () => toStats(await request<PlatformStats>("/v1/stats")),
 };

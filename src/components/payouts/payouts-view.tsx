@@ -9,6 +9,7 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { MockBadge } from "@/components/ui/mock-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
+import { SignInGate } from "@/components/ui/sign-in-gate";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Hint } from "@/components/ui/tooltip";
@@ -109,19 +110,21 @@ function MyInsights({ account }: { account: string }) {
 }
 
 export function PayoutsView() {
-  const { accountId, signedIn, signingIn, signIn, connect, connecting } = useWallet();
-  if (!accountId) return <EmptyState title="Connect your wallet to see your payouts." action={<Button variant="primary" loading={connecting} onClick={() => connect()}>Connect wallet</Button>} />;
-  if (!signedIn) return <EmptyState title="Sign in to see your payouts." body="Sign ConDex's message with your wallet. It costs nothing." action={<Button variant="primary" loading={signingIn} onClick={() => signIn()}>Sign in</Button>} />;
+  const { accountId } = useWallet();
   return (
-    <div className="space-y-8">
-      <Summary account={accountId} />
-      <Tabs defaultValue="receipts">
-        <TabsList aria-label="Payout sections"><TabsTrigger value="receipts">Receipts</TabsTrigger><TabsTrigger value="insights">My theses</TabsTrigger></TabsList>
-        <div className="pt-5">
-          <TabsContent value="receipts"><Receipts /></TabsContent>
-          <TabsContent value="insights"><MyInsights account={accountId} /></TabsContent>
+    <SignInGate why="to see your earnings and receipts">
+      {accountId && (
+        <div className="space-y-8">
+          <Summary account={accountId} />
+          <Tabs defaultValue="receipts">
+            <TabsList aria-label="Payout sections"><TabsTrigger value="receipts">Receipts</TabsTrigger><TabsTrigger value="insights">My theses</TabsTrigger></TabsList>
+            <div className="pt-5">
+              <TabsContent value="receipts"><Receipts /></TabsContent>
+              <TabsContent value="insights"><MyInsights account={accountId} /></TabsContent>
+            </div>
+          </Tabs>
         </div>
-      </Tabs>
-    </div>
+      )}
+    </SignInGate>
   );
 }

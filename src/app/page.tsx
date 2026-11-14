@@ -16,7 +16,7 @@ export default function HomePage() {
       <FlipBoard>
         <div className="flex flex-wrap justify-center gap-3">
           <Button asChild variant="primary" size="lg"><Link href="/gallery">Browse the gallery</Link></Button>
-          <Button asChild variant="secondary" size="lg" className="bg-background"><Link href="/publish">Publish an insight</Link></Button>
+          <Button asChild variant="secondary" size="lg" className="bg-background"><Link href="/publish">Publish a thesis</Link></Button>
         </div>
       </FlipBoard>
       <div className="container-wide space-y-20 overflow-x-clip py-10 md:py-14">

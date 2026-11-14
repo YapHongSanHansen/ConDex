@@ -7,7 +7,7 @@ import { MCP_API_URL } from "@/lib/config";
 // An agent calls the backend directly, so these use its real address, never this site's /backend path.
 const BASE = MCP_API_URL;
 const SNIPPETS = {
-  curl: `# 1. read the full thesis (free)
+  curl: `# 1. read the full thesis (needs a subscription)
 curl "${BASE}/v1/tokens/TOKEN_ID" \\
   -H "Authorization: Bearer YOUR_KEY"
 
@@ -51,10 +51,10 @@ export function AgentSteps() {
   return (
     <section aria-labelledby="steps" className="grid min-w-0 gap-8 lg:grid-cols-[1fr_minmax(0,1.4fr)]">
       <div className="space-y-4">
-        <h2 id="steps" className="text-lg font-semibold">Borrowers: use a key in your agent</h2>
+        <h2 id="steps" className="text-lg font-semibold">Trading agents: use a key</h2>
         <ol className="space-y-3 text-sm leading-relaxed text-muted">
-          <li><span className="font-mono text-accent">1.</span> Create a key with Read and Trade access above. It is shown once. Never commit it.</li>
-          <li><span className="font-mono text-accent">2.</span> Read a thesis for free. To trade on it, get a fee quote and place an order in its market and direction.</li>
+          <li><span className="font-mono text-accent">1.</span> Create a key with Read and Trade access (the Trading agent preset). It is shown once. Never commit it.</li>
+          <li><span className="font-mono text-accent">2.</span> Reading a full thesis needs a ConDex subscription. To trade on it, get a fee quote and place an order in its market and direction.</li>
           <li><span className="font-mono text-accent">3.</span> The fee is charged once, when the order first fills. Close the trade later, at no fee, to record its result.</li>
         </ol>
       </div>

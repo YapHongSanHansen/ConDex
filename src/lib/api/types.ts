@@ -49,6 +49,9 @@ export interface InsightDetail extends Insight {
 export interface ListInsightsParams {
   market?: string;
   horizon?: Horizon;
+  direction?: "long" | "short";
+  /** Expired theses are left out unless this is true. */
+  include_expired?: boolean;
   max_price?: number;
   expiry?: "soon" | "later";
   sort?: SortKey;
@@ -140,6 +143,8 @@ export interface InsightsApi {
   listInsights(params: ListInsightsParams): Promise<Page<Insight>>;
   getInsight(id: string): Promise<InsightDetail>;
   getStats(): Promise<Stats>;
+  /** The markets that have a published thesis, for the gallery's filter. */
+  listMarkets(): Promise<string[]>;
 }
 
 export interface CloseTradeInput { quantity?: string | null; limit_price?: string | null }

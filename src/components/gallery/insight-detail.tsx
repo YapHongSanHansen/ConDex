@@ -34,9 +34,9 @@ export function InsightDetailView({ id }: { id: string }) {
 
 function Detail({ i }: { i: InsightDetail }) {
   return (
+    // On a phone the panel follows the preview, so reading and trading are not buried under the proof.
     <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr] lg:items-start">
-      <div className="space-y-6">
-        <section className="space-y-4 rounded-md border border-border bg-surface p-6" aria-label="Public preview">
+        <section className="space-y-4 rounded-md border border-border bg-surface p-6 lg:col-start-1" aria-label="Public preview">
           <div className="flex flex-wrap items-center gap-3"><p className="label-caps">Preview</p><StatusBadge status={i.status} /></div>
           <h1 className="font-mono text-3xl font-semibold">{i.market}</h1>
           <p className="text-lg">{i.title}</p>
@@ -46,9 +46,12 @@ function Detail({ i }: { i: InsightDetail }) {
               <div key={k}><dt className="label-caps">{k}</dt><dd className="mt-1 font-mono text-lg">{v}</dd></div>
             ))}
           </dl>
-          <p className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted"><Lock className="h-4 w-4 shrink-0" aria-hidden />The entry, invalidation and conversation stay locked until you subscribe. The creator&apos;s accuracy: {i.accuracy_pct === null ? "not judged yet" : `${i.accuracy_pct}% of ${i.judged} judged`}.</p>
+          <p className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted"><Lock className="h-4 w-4 shrink-0" aria-hidden />The entry, invalidation and conversation are private: subscribers read them on the right. The creator&apos;s accuracy: {i.accuracy_pct === null ? "not judged yet" : `${i.accuracy_pct}% of ${i.judged} judged`}.</p>
         </section>
 
+      <TradePanel insight={i} />
+
+      <div className="space-y-6 lg:col-start-1">
                 <section className="space-y-3" aria-label="Version history">
           <h2 className="label-caps">Versions</h2>
           <ul className="divide-y divide-border rounded-md border border-border bg-surface">
@@ -75,7 +78,6 @@ function Detail({ i }: { i: InsightDetail }) {
         <ProofPanel id={i.id} />
         <p className="text-xs text-muted">{DISCLAIMER}</p>
       </div>
-      <TradePanel insight={i} />
     </div>
   );
 }

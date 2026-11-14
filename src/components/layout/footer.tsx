@@ -1,10 +1,11 @@
 import Link from "next/link";
 
+const REPO = "https://github.com/YapHongSanHansen/ConDex";
 const COLUMNS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
-  { title: "Product", links: [{ label: "Gallery", href: "/gallery" }, { label: "Publish an insight", href: "/publish" }, { label: "Connect your API", href: "/keys" }, { label: "Payouts", href: "/payouts" }] },
-  { title: "Developers", links: [{ label: "API contract", href: "#api-contract" }, { label: "MCP setup", href: "/keys" }, { label: "Read and trade", href: "/keys" }, { label: "GitHub", href: "#github" }] },
-  { title: "Protocol", links: [{ label: "NEAR testnet", href: "https://testnet.nearblocks.io", external: true }, { label: "Contract", href: "https://github.com/YapHongSanHansen/ConDex/tree/backend/contract", external: true }, { label: "Wallet connector", href: "https://github.com/hot-dao/near-selector", external: true }] },
-  { title: "Legal", links: [{ label: "Disclaimer", href: "#disclaimer" }, { label: "Privacy", href: "#privacy" }, { label: "Terms", href: "#terms" }] },
+  { title: "Product", links: [{ label: "Gallery", href: "/gallery" }, { label: "Publish a thesis", href: "/publish" }, { label: "Keys & orders", href: "/keys" }, { label: "Payouts", href: "/payouts" }] },
+  { title: "Developers", links: [{ label: "How it works", href: "/#how" }, { label: "MCP setup", href: "/keys?tab=keys" }, { label: "Backend README", href: `${REPO}/tree/backend#readme`, external: true }, { label: "GitHub", href: REPO, external: true }] },
+  { title: "Protocol", links: [{ label: "NEAR testnet", href: "https://testnet.nearblocks.io", external: true }, { label: "Contract", href: `${REPO}/tree/backend/contract`, external: true }, { label: "Wallet connector", href: "https://github.com/hot-dao/near-selector", external: true }] },
+  { title: "Legal", links: [{ label: "Disclaimer", href: "#disclaimer" }] },
 ];
 
 export function Footer() {

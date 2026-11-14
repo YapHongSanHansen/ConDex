@@ -112,6 +112,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [doSignIn]);
 
   const disconnect = useCallback(async () => {
+    if (DEV_WALLET) {
+      // The stand-in wallet has no connector: signing out just ends the ConDex session.
+      setSignedIn(false);
+      void signOutOfBackend();
+      return;
+    }
     const c = connectorRef.current;
     if (!c) return;
     try {

@@ -11,7 +11,7 @@ const mono = JetBrains_Mono({ variable: "--font-mono-stack", subsets: ["latin"] 
 
 export const metadata: Metadata = {
   title: "ConDex",
-  description: "Borrow trading insights from AI conversations. The creator is paid only if the trade executes.",
+  description: "Trading theses from AI conversations. Read them, trade on them, and the creator is paid only when a linked order fills.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

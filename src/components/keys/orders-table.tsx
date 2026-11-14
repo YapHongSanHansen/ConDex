@@ -9,9 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { StatusBadge, StatusLegend } from "@/components/ui/status-badge";
+import { SignInGate } from "@/components/ui/sign-in-gate";
 import { useWallet } from "@/lib/near/connector";
 import { formatDate, formatNear } from "@/lib/utils";
 import { OrderDrawer } from "./order-drawer";
+
+/** An order whose position is open and has no closing order waiting. */
+function closable(o: Order): boolean {
+  return !!o.trade && o.trade.status !== "closed" && Number(o.trade.open_quantity) > 0 && !o.closing_orders.some((c) => c.status === "open" || c.status === "submitted");
+}
 
 function Result({ o }: { o: Order }) {
   const r = o.trade?.result;
@@ -33,10 +39,10 @@ export function OrdersTable() {
         <h2 id="orders-h" className="text-lg font-semibold">Your orders</h2>
         <StatusLegend statuses={["open", "filled", "cancelled", "closed"]} />
       </div>
-      {!signedIn ? <EmptyState title="Sign in to see your orders." body="Connect your wallet and sign in above." />
+      {!signedIn ? <SignInGate why="to see the orders you placed" />
         : q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} />
         : q.isLoading ? <Skeleton className="h-48" />
-        : q.data!.length === 0 ? <EmptyState title="No orders yet." body="Open a thesis in the gallery, subscribe if you want to read it, and place an order linked to it." action={<Button asChild variant="primary"><Link href="/gallery">Browse the gallery</Link></Button>} />
+        : q.data!.length === 0 ? <EmptyState title="No orders yet." body="Open a thesis in the gallery, subscribe if you want to read it, and place an order linked to it." action={<Button asChild variant="primary"><Link href="/gallery">Browse theses</Link></Button>} />
         : (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full min-w-[860px] text-left text-sm">
@@ -52,7 +58,7 @@ export function OrdersTable() {
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1.5">
                         <Button asChild size="sm" variant="ghost"><Link href={`/gallery/${o.token_id}`}>Open thesis</Link></Button>
-                        <Button size="sm" variant="ghost" onClick={() => setOpenId(o.id)}>Details</Button>
+                        <Button size="sm" variant={closable(o) ? "secondary" : "ghost"} onClick={() => setOpenId(o.id)}>{closable(o) ? "Close trade" : "Details"}</Button>
                       </div>
                     </td>
                   </tr>

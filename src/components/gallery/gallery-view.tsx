@@ -43,7 +43,8 @@ export function GalleryView() {
     queryFn: ({ pageParam }) =>
       api.insights.listInsights({
         market: market || undefined,
-        horizon: filters.horizon,
+        direction: filters.direction,
+        include_expired: filters.includeExpired,
         max_price: filters.maxPrice >= MAX_PRICE ? undefined : filters.maxPrice,
         expiry: filters.expiry,
         sort: filters.sort,
@@ -54,6 +55,7 @@ export function GalleryView() {
 
   const items = useMemo(() => q.data?.pages.flatMap((p) => p.items) ?? [], [q.data]);
   const total = q.data?.pages[0]?.total ?? 0;
+  const filtered = JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS) || search !== "";
   const clear = () => { setFilters(DEFAULT_FILTERS); setSearch(""); };
 
   return (
@@ -61,7 +63,7 @@ export function GalleryView() {
       <aside className="hidden lg:block" aria-label="Filters">
         <div className="sticky top-20 rounded-md border border-border bg-surface p-5">
           <FilterRail value={filters} onChange={setFilters} />
-          <Button variant="ghost" size="sm" className="mt-6 w-full" onClick={clear}>Clear filters</Button>
+          <Button variant="ghost" size="sm" className="mt-6 w-full" disabled={!filtered} onClick={clear}>Clear filters</Button>
         </div>
       </aside>
 
@@ -69,13 +71,13 @@ export function GalleryView() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative min-w-0 flex-1 basis-64">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden />
-            <Input ref={searchRef} aria-label="Search markets" placeholder="Search markets  ( / )" className="h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Input ref={searchRef} aria-label="Search markets" placeholder="Search markets, for example ETH  ( / )" className="h-9 pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <Dialog>
             <DialogTrigger asChild><Button variant="secondary" className="lg:hidden"><SlidersHorizontal className="h-4 w-4" />Filters</Button></DialogTrigger>
             <DialogContent side="left" title="Filters">
               <FilterRail value={filters} onChange={setFilters} />
-              <Button variant="ghost" size="sm" className="mt-6 w-full" onClick={clear}>Clear filters</Button>
+              <Button variant="ghost" size="sm" className="mt-6 w-full" disabled={!filtered} onClick={clear}>Clear filters</Button>
             </DialogContent>
           </Dialog>
           <div className="flex rounded-md border border-border" role="group" aria-label="View">
@@ -86,7 +88,7 @@ export function GalleryView() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-muted" aria-live="polite">{q.isLoading ? "Loading…" : `${total} insight${total === 1 ? "" : "s"}`}</p>
+          <p className="text-sm text-muted" aria-live="polite">{q.isLoading ? "Loading…" : `${total} thesis${total === 1 ? "" : "es"}`}</p>
         </div>
 
         {q.isError ? (
@@ -94,18 +96,18 @@ export function GalleryView() {
         ) : q.isLoading ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-36" />)}</div>
         ) : items.length === 0 ? (
-          <EmptyState title="No insights match." action={<Button variant="secondary" onClick={clear}>Clear filters</Button>} />
+          <EmptyState title="No theses match." body={filtered ? "Try fewer filters, or include expired ones." : "Nothing has been published yet."} action={filtered ? <Button variant="secondary" onClick={clear}>Clear filters</Button> : <Button asChild variant="primary"><Link href="/publish">Publish a thesis</Link></Button>} />
         ) : view === "grid" ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{items.map((i) => <InsightCard key={i.id} insight={i} />)}</div>
         ) : (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="label-caps border-b border-border"><tr>{["Market", "Horizon", "Price", "Expires", "Ver.", "Creator", "Status"].map((h) => <th key={h} scope="col" className="px-4 py-3 font-normal">{h}</th>)}</tr></thead>
+              <thead className="label-caps border-b border-border"><tr>{["Market", "Direction", "Fee", "Expires", "Ver.", "Creator", "Status"].map((h) => <th key={h} scope="col" className="px-4 py-3 font-normal">{h}</th>)}</tr></thead>
               <tbody>
                 {items.map((i) => (
                   <tr key={i.id} className="border-b border-border last:border-0 hover:bg-surface-2">
                     <td className="px-4 py-3 font-mono"><Link className="hover:text-accent" href={`/gallery/${i.id}`}>{i.market}</Link></td>
-                    <td className="px-4 py-3">{i.horizon}</td>
+                    <td className="px-4 py-3 capitalize">{i.direction}</td>
                     <td className="px-4 py-3 font-mono">{formatNear(i.price)}</td>
                     <td className="px-4 py-3 font-mono">{timeUntil(i.expires_at, now)}</td>
                     <td className="px-4 py-3 font-mono">v{i.version}</td>

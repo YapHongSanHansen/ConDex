@@ -58,6 +58,8 @@ function filterInsights(p: ListInsightsParams): InsightDetail[] {
   let out = insights.filter((i) => {
     if (p.market && !i.market.toLowerCase().includes(p.market.toLowerCase())) return false;
     if (p.horizon && i.horizon !== p.horizon) return false;
+    if (p.direction && i.direction !== p.direction) return false;
+    if (!p.include_expired && i.status !== "live") return false;
     if (p.max_price !== undefined && i.price > Number(p.max_price)) return false;
     const left = new Date(i.expires_at).getTime() - now;
     if (p.expiry === "soon" && !(left > 0 && left < 24 * 3600 * 1000)) return false;
@@ -118,6 +120,7 @@ export const MOCK_API: Api = {
         return { items: slice.map(toPreview), next_cursor: start + PAGE < all.length ? String(start + PAGE) : null, total: all.length };
       }),
     getInsight: (id) => delay(() => find(id)),
+    listMarkets: () => delay(() => [...new Set(insights.map((i) => i.market))].sort()),
     getStats: () =>
       delay(() => ({
         insights_listed: insights.filter((i) => i.status === "live").length,

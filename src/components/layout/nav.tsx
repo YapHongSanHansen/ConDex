@@ -17,7 +17,7 @@ import { cn, truncateAccount } from "@/lib/utils";
 const LINKS = [
   { href: "/", label: "Home" },
   { href: "/gallery", label: "Gallery" },
-  { href: "/keys", label: "Connect your API" },
+  { href: "/keys", label: "Keys & orders" },
   { href: "/payouts", label: "Payouts" },
 ];
 
@@ -39,7 +39,7 @@ function ThemeToggle() {
 }
 
 function WalletButton({ onDone }: { onDone?: () => void }) {
-  const { accountId, connect, disconnect, connecting, ready } = useWallet();
+  const { accountId, signedIn, signingIn, signIn, connect, disconnect, connecting, ready } = useWallet();
   if (!accountId) {
     return (
       <Button variant="primary" className="h-9 rounded-full px-4" loading={connecting} disabled={!ready} onClick={async () => { await connect(); onDone?.(); }}>
@@ -51,13 +51,20 @@ function WalletButton({ onDone }: { onDone?: () => void }) {
     <DropdownMenu>
       <DropdownTrigger asChild>
         <Button variant="secondary" className="h-9 rounded-full" aria-label={`Wallet menu for ${accountId}`}>
-          <span className="h-1.5 w-1.5 rounded-full bg-positive" aria-hidden />
+          <span className={cn("h-1.5 w-1.5 rounded-full", signedIn ? "bg-positive" : "bg-warning")} aria-hidden />
           <span className="font-mono text-xs">{truncateAccount(accountId, 10, 8)}</span>
           <Badge tone="muted" className="hidden sm:inline-flex">testnet</Badge>
           <ChevronDown className="h-3.5 w-3.5" aria-hidden />
         </Button>
       </DropdownTrigger>
       <DropdownContent>
+        {signedIn ? (
+          <p className="px-2 py-1.5 text-xs text-muted">Signed in to ConDex</p>
+        ) : (
+          <DropdownItem onSelect={() => { void signIn(); }} disabled={signingIn}>
+            <Wallet className="h-4 w-4" /> Sign in to ConDex
+          </DropdownItem>
+        )}
         <DropdownItem onSelect={async () => { await navigator.clipboard.writeText(accountId).catch(() => {}); toast.success("Account id copied"); }}>
           <Copy className="h-4 w-4" /> Copy account id
         </DropdownItem>

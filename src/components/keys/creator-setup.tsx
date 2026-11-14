@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
+import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, Circle, Plug, ShieldCheck } from "lucide-react";
 import { api, friendlyError, SCOPES, toApiError, type IssuedKey, type KeyRow, type Scope } from "@/lib/api";
@@ -76,7 +78,7 @@ export function CreatorSetup() {
   const refresh = () => qc.invalidateQueries({ queryKey: ["keys"] });
   const create = useMutation({
     mutationFn: () => api.keys.issue({ scopes, label: MCP_LABEL }),
-    onSuccess: (k) => { setIssued(k); refresh(); },
+    onSuccess: (k) => { setIssued(k); refresh(); toast.success("Key created. Copy it now: it is shown once."); },
   });
   const revoke = useMutation({ mutationFn: (id: string) => api.keys.revoke(id), onSuccess: refresh });
   const disconnect = useMutation({ mutationFn: () => api.keys.disconnectMcp(), onSuccess: () => { setIssued(null); refresh(); } });
@@ -134,6 +136,12 @@ export function CreatorSetup() {
               )}
               <fieldset className="space-y-2">
                 <legend className="label-caps mb-1">{active.length ? "New key" : "What can it do?"}</legend>
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {([["Publisher", ["publish"]], ["Trading agent", ["read", "trade"]], ["Everything", ["publish", "read", "trade"]]] as [string, Scope[]][]).map(([label, preset]) => (
+                    <button key={label} type="button" onClick={() => setScopes(preset)} aria-pressed={preset.length === scopes.length && preset.every((x) => scopes.includes(x))}
+                      className="cursor-pointer rounded-full border border-border px-2.5 py-0.5 text-xs text-muted hover:text-text aria-pressed:border-accent aria-pressed:text-accent">{label}</button>
+                  ))}
+                </div>
                 {SCOPES.map((s) => (
                   <label key={s} className="flex cursor-pointer items-start gap-2.5 text-sm">
                     <input type="checkbox" checked={scopes.includes(s)} onChange={() => toggle(s)} className="mt-1 h-4 w-4 accent-[var(--accent)]" />
@@ -153,7 +161,7 @@ export function CreatorSetup() {
             <Badge tone={connected ? "accent" : "muted"}>{connected ? <Check className="h-3 w-3" aria-hidden /> : <Circle className="h-3 w-3" aria-hidden />}{connected ? "MCP connected" : "Waiting for Claude Code"}</Badge>
           </div>
           <p className="text-sm text-muted">Run once in your terminal with your key. This page shows connected when Claude Code starts the server with it.</p>
-          <CodeBlock title="terminal · proposed command" code={mcpCommand(issued?.secret ?? null)} />
+          <CodeBlock title="terminal" code={mcpCommand(issued?.secret ?? null)} />
           {connected && mcpKey?.mcp && (
             <div className="space-y-3 rounded-md border border-border p-3 text-sm">
               <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -176,14 +184,9 @@ export function CreatorSetup() {
         </div>
       </div>
 
-      <div className="space-y-4 rounded-md border border-border bg-surface p-5">
-        <StepHeader n={3} title="Publish with its conditions" done={false} />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <p className="text-sm leading-relaxed text-muted">
-            Ask Claude Code to publish. A thesis records its market, direction, entry and invalidation, and an expiry. Leave the expiry out and ConDex sets one and tells you.
-          </p>
-          <CodeBlock title="say this in claude code" code={EXPORT_PROMPT} />
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface p-5">
+        <div className="space-y-1"><StepHeader n={3} title="Publish a thesis" done={false} /><p className="pl-9 text-sm text-muted">Define the market, direction, entry, invalidation, expiry and fee, then paste the prompt into Claude Code.</p></div>
+        <Button asChild variant="secondary"><Link href="/publish">Define a thesis</Link></Button>
       </div>
     </section>
   );
