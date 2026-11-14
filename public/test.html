@@ -295,7 +295,7 @@ const STATE_FIELDS = [
   ["aliceSession", "Alice wallet session"], ["alicePublish", "Alice publish key"],
   ["bobSession", "Bob wallet session"], ["bobRead", "Bob read key"], ["bobTrade", "Bob trade key"],
   ["insightId", "Insight id"], ["tokenId", "Token id"], ["quoteId", "Quote id"], ["orderId", "Order id"],
-  ["lastFillEventId", "Last fill event"], ["receiptId", "Receipt id"], ["execSecret", "Execution secret"],
+  ["lastFillEventId", "Last fill event"], ["closingId", "Closing order id"], ["receiptId", "Receipt id"], ["execSecret", "Execution secret"],
 ];
 const stateEl = document.getElementById("state");
 for (const [key, label] of STATE_FIELDS) {
@@ -840,7 +840,8 @@ const SECTIONS = [
     hint: "Drives the current order. The first fill pays Alice once; nothing else pays again. Evidence is labelled \"simulated\".",
     fields: `
       <label>Fill quantity<input id="f-fill-qty" value="0.5"></label>
-      <label>Fill price<input id="f-fill-price" value="3500"></label>`,
+      <label>Fill price<input id="f-fill-price" value="3500"></label>
+      <label>Closing fill price<input id="f-close-price" value="3400"></label>`,
     actions: [
       { id: "simFill", label: "Partial fill", run: async () => {
         const b = await sim("fill", { quantity: val("f-fill-qty"), price: val("f-fill-price") });
@@ -854,6 +855,17 @@ const SECTIONS = [
       { id: "simFillRest", label: "Fill the rest", run: async () => {
         const b = await sim("fill");
         return expectEffect(b, "fill_same_receipt");
+      } },
+      { id: "closeTrade", label: "Close the trade (closing order)", run: async () => {
+        const b = expectStatus(await call("POST", `/v1/orders/${need("orderId", "Place an order")}/close`, { key: need("bobTrade", "Issue Bob's keys"), body: {} }), 201);
+        S.closingId = b.id;
+        return `closing order ${b.id}: ${b.side} ${b.quantity}, ${b.status}. It has no fee`;
+      } },
+      { id: "closeFill", label: "Fill the closing order", run: async () => {
+        const b = expectStatus(await call("POST", `/v1/sim/orders/${need("closingId", "Close the trade")}/fill`, { body: { price: val("f-close-price") } }), 201);
+        if (STRICT) expect(b.trade.status === "closed", `expected the trade to be closed, got "${b.trade.status}"`);
+        const r = b.trade.result;
+        return `trade ${b.trade.status}` + (r?.available ? `; ${b.trade.direction} from ${r.entry_price} to ${r.exit_price}: pnl ${r.pnl} (${r.return_pct}%), ${r.outcome}` : "");
       } },
       { id: "simCancel", label: "Cancel", run: async () => {
         await freshOrderIfStrict();
@@ -924,7 +936,8 @@ const SECTIONS = [
         const last = proofs.at(-1);
         if (!last) return "no proof of trade yet: one appears on an order's first confirmed fill";
         expect(last.thesis.content_hash === b.proof_of_thesis.content_hash, "a proof of trade should name the thesis fingerprint");
-        return `${proofs.length} proofs of trade; latest: ${last.trader} (${last.role}), ${last.order.side} ${last.order.market}, first fill ${last.fill.quantity} at ${last.fill.price ?? "no price"} (${last.fill.source}), fee ${last.fee_paid.near} NEAR`;
+        return `${proofs.length} proofs of trade; latest: ${last.trader} (${last.role}), ${last.order.side} ${last.order.market}, first fill ${last.fill.quantity} at ${last.fill.price ?? "no price"} (${last.fill.source}), fee ${last.fee_paid.near} NEAR; trade ${last.trade.status}` +
+          (last.trade.result?.available ? `, closed at ${last.trade.result.exit_price}: ${last.trade.result.outcome} ${last.trade.result.pnl}` : "");
       } },
     ],
   },
