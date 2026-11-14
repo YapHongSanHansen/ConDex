@@ -7,7 +7,7 @@ export const metadata = { title: "Publish · ConDex" };
 export default function PublishPage() {
   return (
     <div className="container-wide space-y-8 pb-10">
-      <PageHeader title="Publish">Define the thesis here, then have your agent publish it. It is minted on NEAR testnet.</PageHeader>
+      <PageHeader title="Publish">Connect Claude Code once, describe your thesis, and Claude publishes it for you.</PageHeader>
       <Suspense fallback={null}><PublishFlow /></Suspense>
     </div>
   );

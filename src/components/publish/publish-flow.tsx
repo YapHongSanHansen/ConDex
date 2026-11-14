@@ -9,14 +9,14 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/ui/code-block";
 import { Field, Input, Textarea } from "@/components/ui/input";
-import { CreatorSetup } from "@/components/keys/creator-setup";
+import { ConnectClaude } from "@/components/connect/connect-claude";
 import { DISCLAIMER } from "@/components/layout/page-header";
 import { useWallet } from "@/lib/near/connector";
 import { cn, formatDate } from "@/lib/utils";
 import { PublicPreview } from "./preview";
 import { buildPrompt, EMPTY_DRAFT, validate, type Draft } from "./types";
 
-const STEPS = ["Connect", "Define", "Publish"];
+const STEPS = ["Connect Claude Code", "Describe your thesis", "Publish"];
 
 /** Waits for the thesis the agent publishes: any token of this creator newer than the moment this step opened. */
 function Watch({ account, since }: { account: string; since: number }) {
@@ -36,92 +36,149 @@ function Watch({ account, since }: { account: string; since: number }) {
   );
 }
 
+const COMMON_MARKETS = ["ETH-USD", "BTC-USD", "SOL-USD", "NEAR-USD"];
+const FEES = ["0.1", "0.5", "1"];
+
+function Choice({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" aria-pressed={active} onClick={onClick}
+      className={cn("h-11 flex-1 cursor-pointer rounded-md border px-4 text-sm font-medium transition-colors", active ? "border-accent bg-accent/10 text-text" : "border-border text-muted hover:text-text")}>
+      {children}
+    </button>
+  );
+}
+
 export function PublishFlow() {
   const from = useSearchParams().get("from");
-  const { accountId, signedIn } = useWallet();
+  const { accountId } = useWallet();
   const [step, setStep] = useState(0);
+  const [connected, setConnected] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [showErrors, setShowErrors] = useState(false);
   // The moment the creator reached the last step. A thesis published after it is the one being waited for.
   const [startedAt, setStartedAt] = useState(0);
   const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
   const errors = useMemo(() => validate(draft), [draft]);
-  const defineOk = Object.keys(errors).length === 0;
-  const canAdvance = step === 0 ? signedIn : step === 1 ? defineOk : false;
   const next = () => {
-    if (step === 1) setShowErrors(true);
-    if (!canAdvance) return;
-    if (step === 1) setStartedAt(Date.now() - 1000);
+    if (step === 1) {
+      setShowErrors(true);
+      if (Object.keys(errors).length > 0) return;
+      setStartedAt(Date.now() - 1000);
+    }
     setStep((s) => s + 1);
   };
+  const advanced = !!(draft.target || draft.expiry || draft.evaluationDeadline);
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[1fr_340px]">
+    <div className={cn("grid gap-8", step > 0 && "lg:grid-cols-[1fr_320px]")}>
       <div className="min-w-0 space-y-6">
         <ol className="flex flex-wrap gap-2" aria-label="Progress">
           {STEPS.map((s, i) => (
-            <li key={s} aria-current={i === step ? "step" : undefined} className={cn("flex items-center gap-2 rounded-md border px-3 py-1.5 font-mono text-xs uppercase tracking-wider", i === step ? "border-accent text-text" : "border-border text-muted")}>
-              {i < step ? <Check className="h-3.5 w-3.5 text-accent" aria-hidden /> : <span>{i + 1}</span>}{s}
+            <li key={s} aria-current={i === step ? "step" : undefined} className={cn("flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm", i === step ? "border-accent text-text" : "border-border text-muted")}>
+              <span className={cn("flex h-5 w-5 items-center justify-center rounded-full font-mono text-[11px]", i < step ? "bg-accent text-accent-fg" : "border border-current")}>{i < step ? <Check className="h-3 w-3" aria-hidden /> : i + 1}</span>{s}
             </li>
           ))}
         </ol>
-        {from && <p className="rounded-md border border-border p-3 text-sm text-muted">New version of <span className="font-mono">{from}</span>. A new version gets its own token, and earlier ones keep working.</p>}
+        {from && <p className="rounded-md border border-border p-3 text-sm text-muted">This will be a new version of <span className="font-mono">{from}</span>. It gets its own token, and earlier versions keep working.</p>}
 
-        {step === 0 && <CreatorSetup />}
+        {step === 0 && (
+          <ConnectClaude
+            onConnected={() => setConnected(true)}
+            after={<Button variant="primary" onClick={() => setStep(1)}>Continue</Button>}
+          />
+        )}
 
         {step === 1 && (
-          <div className="grid gap-5 md:grid-cols-2">
-            <Field label="Market" htmlFor="market" help="Public." error={showErrors ? errors.market : undefined}>
-              <Input id="market" placeholder="e.g. ETH-USD" value={draft.market} onChange={(e) => set({ market: e.target.value })} aria-invalid={showErrors && !!errors.market} />
-            </Field>
-            <Field label="Direction" htmlFor="direction" help="Public. A long opens with a buy, a short with a sell." error={showErrors ? errors.direction : undefined}>
-              <select id="direction" value={draft.direction} onChange={(e) => set({ direction: e.target.value as Draft["direction"] })} aria-invalid={showErrors && !!errors.direction} className="h-10 w-full rounded-md border border-border bg-surface px-3 text-sm aria-[invalid=true]:border-danger">
-                <option value="">Choose…</option><option value="long">Long</option><option value="short">Short</option>
-              </select>
-            </Field>
-            <div className="md:col-span-2">
-              <Field label="Entry" htmlFor="entry" help="When to enter, in your own words. Kept private, with the conversation." error={showErrors ? errors.entry : undefined}>
-                <Textarea id="entry" className="min-h-20" placeholder="e.g. A 15-minute candle closes back below yesterday's UTC high." value={draft.entry} onChange={(e) => set({ entry: e.target.value })} aria-invalid={showErrors && !!errors.entry} />
-              </Field>
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <label htmlFor="market" className="block text-sm font-medium">Which market?</label>
+              <Input id="market" list="markets" placeholder="For example ETH-USD" value={draft.market} onChange={(e) => set({ market: e.target.value })} aria-invalid={showErrors && !!errors.market} />
+              <datalist id="markets">{COMMON_MARKETS.map((m) => <option key={m} value={m} />)}</datalist>
+              {showErrors && errors.market && <p role="alert" className="text-xs text-danger">{errors.market}</p>}
             </div>
-            <div className="md:col-span-2">
-              <Field label="Invalidation" htmlFor="invalidation" help="What would prove the idea wrong." error={showErrors ? errors.invalidation : undefined}>
-                <Textarea id="invalidation" className="min-h-20" placeholder="e.g. A 1-hour close above the sweep high." value={draft.invalidation} onChange={(e) => set({ invalidation: e.target.value })} aria-invalid={showErrors && !!errors.invalidation} />
-              </Field>
+
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Which way do you expect it to go?</legend>
+              <div className="flex gap-2">
+                <Choice active={draft.direction === "long"} onClick={() => set({ direction: "long" })}>Up: long</Choice>
+                <Choice active={draft.direction === "short"} onClick={() => set({ direction: "short" })}>Down: short</Choice>
+              </div>
+              {showErrors && errors.direction && <p role="alert" className="text-xs text-danger">{errors.direction}</p>}
+            </fieldset>
+
+            <div className="space-y-2">
+              <label htmlFor="entry" className="block text-sm font-medium">When would you get in?</label>
+              <Textarea id="entry" className="min-h-20" placeholder="In your own words, for example: a 15-minute candle closes back below yesterday's high." value={draft.entry} onChange={(e) => set({ entry: e.target.value })} aria-invalid={showErrors && !!errors.entry} />
+              {showErrors && errors.entry && <p role="alert" className="text-xs text-danger">{errors.entry}</p>}
             </div>
-            <Field label="Target (optional)" htmlFor="target" error={showErrors ? errors.target : undefined}>
-              <Input id="target" placeholder="e.g. Yesterday's UTC low" value={draft.target} onChange={(e) => set({ target: e.target.value })} aria-invalid={showErrors && !!errors.target} />
-            </Field>
-            <Field label="Fee (NEAR)" htmlFor="fee" help="Paid once, when a linked order first fills." error={showErrors ? errors.fee : undefined}>
-              <Input id="fee" inputMode="decimal" placeholder="e.g. 0.5" value={draft.fee} onChange={(e) => set({ fee: e.target.value })} aria-invalid={showErrors && !!errors.fee} />
-            </Field>
-            <Field label="Expiry (optional, your local time)" htmlFor="expiry" help="The last moment a trade can be linked. Leave it empty and ConDex sets one and tells you why." error={showErrors ? errors.expiry : undefined}>
-              <Input id="expiry" type="datetime-local" value={draft.expiry} onChange={(e) => set({ expiry: e.target.value })} aria-invalid={showErrors && !!errors.expiry} />
-            </Field>
-            <Field label="Evaluation deadline (optional)" htmlFor="eval" help="Prices up to this day judge the thesis. Up to 30 days after the expiry. Empty means the expiry." error={showErrors ? errors.evaluationDeadline : undefined}>
-              <Input id="eval" type="date" value={draft.evaluationDeadline} onChange={(e) => set({ evaluationDeadline: e.target.value })} aria-invalid={showErrors && !!errors.evaluationDeadline} />
-            </Field>
+
+            <div className="space-y-2">
+              <label htmlFor="invalidation" className="block text-sm font-medium">What would prove you wrong?</label>
+              <Textarea id="invalidation" className="min-h-20" placeholder="For example: a 1-hour close above the sweep high." value={draft.invalidation} onChange={(e) => set({ invalidation: e.target.value })} aria-invalid={showErrors && !!errors.invalidation} />
+              {showErrors && errors.invalidation && <p role="alert" className="text-xs text-danger">{errors.invalidation}</p>}
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="fee" className="block text-sm font-medium">What should a trader pay you?</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input id="fee" inputMode="decimal" className="w-28" placeholder="0.5" value={draft.fee} onChange={(e) => set({ fee: e.target.value })} aria-invalid={showErrors && !!errors.fee} />
+                <span className="text-sm text-muted">NEAR, once, when a trade based on your thesis first fills</span>
+              </div>
+              <div className="flex gap-1.5">{FEES.map((f) => <button key={f} type="button" onClick={() => set({ fee: f })} className="cursor-pointer rounded-full border border-border px-2.5 py-0.5 text-xs text-muted hover:text-text">{f}</button>)}</div>
+              {showErrors && errors.fee && <p role="alert" className="text-xs text-danger">{errors.fee}</p>}
+            </div>
+
+            <details open={advanced} className="rounded-md border border-border p-4">
+              <summary className="cursor-pointer text-sm font-medium">More options <span className="font-normal text-muted">(all optional)</span></summary>
+              <div className="mt-4 grid gap-5 md:grid-cols-2">
+                <Field label="Target" htmlFor="target" help="Where you would take profit." error={showErrors ? errors.target : undefined}>
+                  <Input id="target" placeholder="For example: yesterday's low" value={draft.target} onChange={(e) => set({ target: e.target.value })} />
+                </Field>
+                <Field label="Expires" htmlFor="expiry" help="After this, no new trade can link to it. Leave it empty and ConDex picks a time and tells you why." error={showErrors ? errors.expiry : undefined}>
+                  <Input id="expiry" type="datetime-local" value={draft.expiry} onChange={(e) => set({ expiry: e.target.value })} />
+                </Field>
+                <Field label="Judge it up to" htmlFor="eval" help="Prices up to this day decide whether you were right. Up to 30 days after it expires. Empty: judged when it expires." error={showErrors ? errors.evaluationDeadline : undefined}>
+                  <Input id="eval" type="date" value={draft.evaluationDeadline} onChange={(e) => set({ evaluationDeadline: e.target.value })} />
+                </Field>
+              </div>
+            </details>
           </div>
         )}
 
         {step === 2 && (
           <div className="space-y-5">
-            <p className="text-sm text-muted">Your conversation is on your side, so your agent publishes it. Paste this into Claude Code, with the ConDex MCP tool connected using a key that has Publish access. Only the messages you approve are shared.</p>
-            <CodeBlock title="say this in claude code" code={buildPrompt(draft, from)} />
-            {accountId ? <Watch account={accountId} since={startedAt} /> : null}
+            <ol className="space-y-5">
+              <li className="space-y-2">
+                <p className="font-medium">1. Open Claude Code and paste this</p>
+                <CodeBlock title="say this in claude code" code={buildPrompt(draft, from)} />
+              </li>
+              <li className="space-y-2">
+                <p className="font-medium">2. Tell Claude which messages to share</p>
+                <p className="text-sm text-muted">Claude will ask. Share only what you want readers to see. The rest stays on your computer.</p>
+              </li>
+              <li className="space-y-2">
+                <p className="font-medium">3. Wait here</p>
+                {accountId ? <Watch account={accountId} since={startedAt} /> : null}
+              </li>
+            </ol>
             <p className="text-xs text-muted">Testnet only. {DISCLAIMER}</p>
           </div>
         )}
 
-        <div className="flex justify-between border-t border-border pt-5">
-          <Button variant="ghost" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>Back</Button>
-          {step < 2 && <Button variant="primary" onClick={next} disabled={step === 0 && !canAdvance}>Continue</Button>}
+        {step > 0 && (
+          <div className="flex items-center justify-between border-t border-border pt-5">
+            <Button variant="ghost" onClick={() => setStep((s) => s - 1)}>Back</Button>
+            {step === 1 && <Button variant="primary" size="lg" onClick={next}>Continue</Button>}
+          </div>
+        )}
+        {step === 0 && connected && <p className="sr-only" role="status">Claude Code is connected.</p>}
+      </div>
+      {step > 0 && (
+        <div className="space-y-3 lg:sticky lg:top-24 lg:self-start">
+          <PublicPreview draft={draft} creator={accountId} />
+          <p className="text-xs text-muted">This is what everyone sees. The entry, the invalidation and your conversation are only for subscribers.</p>
         </div>
-      </div>
-      <div className="space-y-3 lg:sticky lg:top-24 lg:self-start">
-        <PublicPreview draft={draft} creator={accountId} />
-        <p className="text-xs text-muted">Only the market, direction, expiry, fee and your record are public. Entry, invalidation and the conversation need a subscription.</p>
-      </div>
+      )}
     </div>
   );
 }
