@@ -13,7 +13,7 @@ export function Footer() {
     <footer className="relative mt-24 overflow-hidden border-t border-border">
       {/* The brand word is the footer's background: centred behind the content, taking no height of its own. */}
       <div aria-hidden className="pointer-events-none absolute inset-0 z-0 flex select-none items-center justify-center overflow-hidden font-semibold leading-none tracking-tighter"
-        style={{ fontSize: "clamp(110px, 25vw, 400px)", color: "transparent", WebkitTextStroke: "1px color-mix(in srgb, var(--text) 13%, transparent)" }}>
+        style={{ fontSize: "clamp(110px, 25vw, 400px)", color: "transparent", WebkitTextStroke: "1px color-mix(in srgb, var(--text) 6%, transparent)" }}>
         ConDex
       </div>
       <div className="container-wide relative z-10 py-14">
