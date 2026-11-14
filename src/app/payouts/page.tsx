@@ -6,7 +6,7 @@ export const metadata = { title: "Payouts · ConDex" };
 export default function PayoutsPage() {
   return (
     <div className="container-wide space-y-8 pb-10">
-      <PageHeader title="Payouts">Fees are earned only when a borrower reports a trade. Reports are self-reported.</PageHeader>
+      <PageHeader title="Payouts">A fee is earned when an order linked to your thesis first fills, whatever the trade later returns.</PageHeader>
       <PayoutsView />
     </div>
   );

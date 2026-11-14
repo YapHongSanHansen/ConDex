@@ -1,110 +1,104 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Pencil } from "lucide-react";
-import { toast } from "sonner";
+import { useQuery } from "@tanstack/react-query";
+import { ExternalLink } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
-import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
-import { Field, Input } from "@/components/ui/input";
 import { MockBadge } from "@/components/ui/mock-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState } from "@/components/ui/states";
-import { StatusBadge, StatusLegend } from "@/components/ui/status-badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Hint } from "@/components/ui/tooltip";
 import { EXPLORER_TX_URL } from "@/lib/config";
-import { formatDate, formatNear, isValidNearAccount, truncateAccount, truncateHash } from "@/lib/utils";
+import { useWallet } from "@/lib/near/connector";
+import { formatDate, formatNear, truncateHash } from "@/lib/utils";
 
-function PayoutAccount({ account }: { account: string }) {
-  const qc = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [value, setValue] = useState(account);
-  const error = value && !isValidNearAccount(value) ? "Use a valid NEAR account id, like alice.testnet." : !value ? "Enter an account id." : null;
-  const m = useMutation({
-    mutationFn: () => api.creators.updatePayoutAccount(value),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["earnings"] }); setConfirming(false); setEditing(false); toast.success("Payout account updated"); },
-  });
-  return (
-    <div className="space-y-2">
-      <p className="label-caps flex items-center gap-1.5">Payout account <Hint label="Where your fees are sent." /></p>
-      {editing ? (
-        <div className="space-y-2">
-          <Field label="NEAR account" htmlFor="payout" error={error}>
-            <Input id="payout" value={value} onChange={(e) => setValue(e.target.value.trim().toLowerCase())} aria-invalid={!!error} />
-          </Field>
-          <div className="flex gap-2">
-            <Button size="sm" variant="primary" disabled={!!error || value === account} onClick={() => setConfirming(true)}>Save</Button>
-            <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setValue(account); }}>Cancel</Button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between gap-2"><p className="break-all font-mono text-sm">{account}</p><Button variant="ghost" size="icon" aria-label="Edit payout account" onClick={() => setEditing(true)}><Pencil className="h-4 w-4" /></Button></div>
-      )}
-      <Dialog open={confirming} onOpenChange={setConfirming}>
-        <DialogContent title="Change payout account?" description="Future fees go to the new account.">
-          <p className="break-all font-mono text-sm">{account} → {value}</p>
-          <p className="mt-3 text-sm text-muted">Past receipts are unchanged.</p>
-          <div className="mt-6 flex justify-end gap-2"><DialogClose asChild><Button variant="ghost">Cancel</Button></DialogClose><Button variant="primary" loading={m.isPending} onClick={() => m.mutate()}>Confirm change</Button></div>
-          {m.isError && <p role="alert" className="mt-3 text-sm text-danger">We couldn&apos;t update it. Try again in a moment.</p>}
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function Summary() {
-  const q = useQuery({ queryKey: ["earnings"], queryFn: () => api.creators.getEarnings() });
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
-  const d = q.data;
+function Summary({ account }: { account: string }) {
+  const earn = useQuery({ queryKey: ["earnings", account], queryFn: () => api.creators.earnings(account) });
+  const prof = useQuery({ queryKey: ["profile", account], queryFn: () => api.creators.profile(account), retry: false });
+  if (earn.isError) return <ErrorState error={earn.error} onRetry={() => earn.refetch()} />;
+  const e = earn.data;
+  const p = prof.data;
+  const score = p?.score;
   const cards: [string, string, string][] = [
-    ["Total earned", d ? formatNear(d.total_earned) : "", "Trade reported, fee paid."],
-    ["Pending", d ? formatNear(d.pending) : "", "Reserved, awaiting a trade report."],
-    ["Released", d ? formatNear(d.released) : "", "Expired without a trade."],
+    ["Fees earned", e ? formatNear(e.earned) : "", "Paid when a linked order first fills, whatever the result."],
+    ["Available", e ? formatNear(e.available) : "", "In your balance, free to use or withdraw."],
+    ["Accuracy", score ? (score.accuracy.accuracy_pct === null ? "n/a" : `${score.accuracy.accuracy_pct}%`) : "", score ? `${score.accuracy.met} of ${score.accuracy.evaluated} judged theses met their conditions. ${score.accuracy.pending} waiting.` : "Judged against market data after each thesis's evaluation deadline."],
+    ["Traders' results", score ? `${score.borrowers.net_return_pct}%` : "", score ? `${score.borrowers.trades} closed trades · $${score.borrowers.net_profit_usd} · max drawdown ${score.borrowers.max_drawdown_pct}%` : "What real trades of your theses returned."],
   ];
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {cards.map(([label, v, help]) => (
         <div key={label} className="space-y-2 rounded-md border border-border bg-surface p-5">
           <p className="label-caps">{label}</p>
-          {q.isLoading ? <Skeleton className="h-8 w-24" /> : <p className="font-mono text-2xl tabular-nums">{v}</p>}
+          {earn.isLoading || (prof.isLoading && label !== "Fees earned" && label !== "Available") ? <Skeleton className="h-8 w-24" /> : <p className="font-mono text-2xl tabular-nums">{v || "n/a"}</p>}
           <p className="text-xs text-muted">{help}</p>
         </div>
       ))}
-      <div className="rounded-md border border-border bg-surface p-5">{d ? <PayoutAccount key={d.payout_account} account={d.payout_account} /> : <Skeleton className="h-16" />}</div>
+      <div className="space-y-2 rounded-md border border-border bg-surface p-5 sm:col-span-2 xl:col-span-4">
+        <p className="label-caps flex items-center gap-1.5">Payout account <Hint label="The payout account is set on each thesis when it is published. It is fixed in the thesis." /></p>
+        <p className="break-all font-mono text-sm">{(p?.stats.payout_accounts.length ? p.stats.payout_accounts : [account]).join(", ")}</p>
+        <p className="text-xs text-muted">By default your own wallet. A thesis pays the account named when it was published, and that cannot change afterwards.</p>
+      </div>
     </div>
   );
 }
 
 function Receipts() {
-  const q = useQuery({ queryKey: ["receipts"], queryFn: () => api.creators.listReceipts() });
+  const q = useQuery({ queryKey: ["receipts"], queryFn: () => api.creators.receipts() });
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   if (q.isLoading) return <Skeleton className="h-64" />;
-  if (!q.data!.length) return <EmptyState title="No receipts yet." body="They appear when a borrower reports a trade." action={<Button asChild variant="primary"><Link href="/publish">Publish your first insight</Link></Button>} />;
+  if (!q.data!.length) return <EmptyState title="No receipts yet." body="A receipt appears when an order linked to a thesis first fills." action={<Button asChild variant="primary"><Link href="/publish">Publish a thesis</Link></Button>} />;
   return (
-    <div className="space-y-4">
-      <StatusLegend statuses={["settled", "pending", "released"]} />
-      <div className="overflow-x-auto rounded-md border border-border bg-surface">
-        <table className="w-full min-w-[860px] text-left text-sm">
-          <thead className="label-caps border-b border-border"><tr>{["Date", "Insight", "Borrower", "Fee", "Status", "Transaction"].map((h) => <th key={h} scope="col" className="px-4 py-3 font-normal">{h}</th>)}</tr></thead>
-          <tbody>
-            {q.data!.map((r) => (
-              <tr key={r.id} className="border-b border-border last:border-0 hover:bg-surface-2">
-                <td className="px-4 py-3 font-mono text-xs">{formatDate(r.date)}</td>
-                <td className="px-4 py-3 font-mono">{r.market} · v{r.version}</td>
-                <td className="px-4 py-3 font-mono text-muted">{truncateAccount(r.borrower)}</td>
-                <td className="px-4 py-3 font-mono">{r.status === "released" ? "0 NEAR" : formatNear(r.fee)}</td>
-                <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2"><MockBadge />
+    <div className="overflow-x-auto rounded-md border border-border bg-surface">
+      <table className="w-full min-w-[860px] text-left text-sm">
+        <thead className="label-caps border-b border-border"><tr>{["Date", "Thesis", "Role", "Fee", "Evidence", "Transaction"].map((h) => <th key={h} scope="col" className="px-4 py-3 font-normal">{h}</th>)}</tr></thead>
+        <tbody>
+          {q.data!.map((r) => (
+            <tr key={r.id} className="border-b border-border last:border-0 hover:bg-surface-2">
+              <td className="px-4 py-3 font-mono text-xs">{formatDate(r.date)}</td>
+              <td className="px-4 py-3 font-mono"><Link className="hover:text-accent" href={`/gallery/${r.insight_id}`}>{r.market} · v{r.version}</Link></td>
+              <td className="px-4 py-3"><StatusBadge status={r.role === "earned" ? "settled" : "released"} /> <span className="text-xs text-muted">{r.role}</span></td>
+              <td className="px-4 py-3 font-mono">{formatNear(r.fee)}</td>
+              <td className="px-4 py-3 text-xs text-muted">{r.evidence}</td>
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-2">{r.ledger === "mock" && <MockBadge />}
+                  {r.ledger === "mock" ? <span className="font-mono text-xs">{truncateHash(r.tx_hash)}</span> : (
                     <a href={`${EXPLORER_TX_URL}${r.tx_hash}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline">{truncateHash(r.tx_hash)}<ExternalLink className="h-3 w-3" aria-label="opens explorer" /></a>
-                    <CopyButton value={r.tx_hash} label="Copy" />
-                  </div>
-                </td>
+                  )}
+                  <CopyButton value={r.tx_hash} label="Copy" />
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MyInsights({ account }: { account: string }) {
+  const q = useQuery({ queryKey: ["profile", account], queryFn: () => api.creators.profile(account), retry: false });
+  if (q.isError) return <EmptyState title="No theses yet." body="Publish one from your agent and it appears here." action={<Button asChild variant="primary"><Link href="/publish">Publish a thesis</Link></Button>} />;
+  if (q.isLoading) return <Skeleton className="h-48" />;
+  const { tokens, stats } = q.data!;
+  return (
+    <div className="space-y-3">
+      <p className="font-mono text-xs text-muted">{stats.insights} theses · {stats.reads} reads · {stats.paid_orders} paid orders · {formatNear(Number(stats.fees_paid.near))} in fees</p>
+      <div className="overflow-x-auto rounded-md border border-border bg-surface">
+        <table className="w-full min-w-[720px] text-left text-sm">
+          <thead className="label-caps border-b border-border"><tr>{["Thesis", "Status", "Fee per filled trade", "Expires", ""].map((h, i) => <th key={i} scope="col" className="px-4 py-3 font-normal">{h}</th>)}</tr></thead>
+          <tbody>
+            {tokens.map((t) => (
+              <tr key={t.token_id} className="border-b border-border last:border-0 hover:bg-surface-2">
+                <td className="px-4 py-3 font-mono"><Link className="hover:text-accent" href={`/gallery/${t.token_id}`}>{t.market} · v{t.version}</Link><div className="text-[11px] text-muted">{t.title}</div></td>
+                <td className="px-4 py-3"><StatusBadge status={t.expired ? "expired" : "live"} /></td>
+                <td className="px-4 py-3 font-mono">{formatNear(Number(t.fee_per_filled_order.near))}</td>
+                <td className="px-4 py-3 font-mono text-xs">{formatDate(t.expires_at)}</td>
+                <td className="px-4 py-3 text-right"><Button asChild size="sm" variant="secondary"><Link href={`/publish?from=${t.insight_id}`}>New version</Link></Button></td>
               </tr>
             ))}
           </tbody>
@@ -114,41 +108,18 @@ function Receipts() {
   );
 }
 
-function MyInsights() {
-  const q = useQuery({ queryKey: ["my-insights"], queryFn: () => api.creators.listMyInsights() });
-  if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
-  if (q.isLoading) return <Skeleton className="h-48" />;
-  if (!q.data!.length) return <EmptyState title="No insights yet." action={<Button asChild variant="primary"><Link href="/publish">Publish your first insight</Link></Button>} />;
-  return (
-    <div className="overflow-x-auto rounded-md border border-border bg-surface">
-      <table className="w-full min-w-[720px] text-left text-sm">
-        <thead className="label-caps border-b border-border"><tr>{["Insight", "Status", "Borrows", "Retrievals", "Earned", ""].map((h, i) => <th key={i} scope="col" className="px-4 py-3 font-normal">{h}</th>)}</tr></thead>
-        <tbody>
-          {q.data!.map((i) => (
-            <tr key={i.id} className="border-b border-border last:border-0 hover:bg-surface-2">
-              <td className="px-4 py-3 font-mono"><Link className="hover:text-accent" href={`/gallery/${i.id}`}>{i.market} · v{i.version}</Link></td>
-              <td className="px-4 py-3"><StatusBadge status={i.status} /></td>
-              <td className="px-4 py-3 font-mono">{i.borrows}</td>
-              <td className="px-4 py-3 font-mono">{i.retrievals}</td>
-              <td className="px-4 py-3 font-mono">{formatNear(i.earned)}</td>
-              <td className="px-4 py-3 text-right"><Button asChild size="sm" variant="secondary"><Link href={`/publish?from=${i.id}`}>Publish new version</Link></Button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 export function PayoutsView() {
+  const { accountId, signedIn, signingIn, signIn, connect, connecting } = useWallet();
+  if (!accountId) return <EmptyState title="Connect your wallet to see your payouts." action={<Button variant="primary" loading={connecting} onClick={() => connect()}>Connect wallet</Button>} />;
+  if (!signedIn) return <EmptyState title="Sign in to see your payouts." body="Sign ConDex's message with your wallet. It costs nothing." action={<Button variant="primary" loading={signingIn} onClick={() => signIn()}>Sign in</Button>} />;
   return (
     <div className="space-y-8">
-      <Summary />
+      <Summary account={accountId} />
       <Tabs defaultValue="receipts">
-        <TabsList aria-label="Payout sections"><TabsTrigger value="receipts">Receipts</TabsTrigger><TabsTrigger value="insights">My insights</TabsTrigger></TabsList>
+        <TabsList aria-label="Payout sections"><TabsTrigger value="receipts">Receipts</TabsTrigger><TabsTrigger value="insights">My theses</TabsTrigger></TabsList>
         <div className="pt-5">
           <TabsContent value="receipts"><Receipts /></TabsContent>
-          <TabsContent value="insights"><MyInsights /></TabsContent>
+          <TabsContent value="insights"><MyInsights account={accountId} /></TabsContent>
         </div>
       </Tabs>
     </div>

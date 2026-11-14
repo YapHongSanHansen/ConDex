@@ -13,7 +13,8 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { DISCLAIMER } from "@/components/layout/page-header";
 import { EXPLORER_TX_URL } from "@/lib/config";
 import { formatDate, formatNear, timeUntil } from "@/lib/utils";
-import { BorrowPanel } from "./borrow-panel";
+import { ProofPanel } from "./proof-panel";
+import { TradePanel } from "./trade-panel";
 
 export function InsightDetailView({ id }: { id: string }) {
   const q = useQuery({ queryKey: ["insight", id], queryFn: () => api.insights.getInsight(id) });
@@ -38,12 +39,14 @@ function Detail({ i }: { i: InsightDetail }) {
         <section className="space-y-4 rounded-md border border-border bg-surface p-6" aria-label="Public preview">
           <div className="flex flex-wrap items-center gap-3"><p className="label-caps">Preview</p><StatusBadge status={i.status} /></div>
           <h1 className="font-mono text-3xl font-semibold">{i.market}</h1>
+          <p className="text-lg">{i.title}</p>
+          {i.summary && <p className="text-sm text-muted">{i.summary}</p>}
           <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {[["Horizon", i.horizon], ["Price", formatNear(i.price)], ["Version", `v${i.version}`], ["Expires in", timeUntil(i.expires_at)]].map(([k, v]) => (
+            {[["Direction", i.direction], ["Fee per filled trade", formatNear(i.price)], ["Version", `v${i.version}`], ["Expires in", timeUntil(i.expires_at)]].map(([k, v]) => (
               <div key={k}><dt className="label-caps">{k}</dt><dd className="mt-1 font-mono text-lg">{v}</dd></div>
             ))}
           </dl>
-          <p className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted"><Lock className="h-4 w-4 shrink-0" aria-hidden />Context stays with the creator until you borrow.</p>
+          <p className="flex items-center gap-2 rounded-md border border-dashed border-border p-3 text-sm text-muted"><Lock className="h-4 w-4 shrink-0" aria-hidden />The entry, invalidation and conversation stay locked until you subscribe. The creator&apos;s accuracy: {i.accuracy_pct === null ? "not judged yet" : `${i.accuracy_pct}% of ${i.judged} judged`}.</p>
         </section>
 
                 <section className="space-y-3" aria-label="Version history">
@@ -51,7 +54,7 @@ function Detail({ i }: { i: InsightDetail }) {
           <ul className="divide-y divide-border rounded-md border border-border bg-surface">
             {[...i.versions].reverse().map((v) => (
               <li key={v.version} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
-                <span className="font-mono">v{v.version}{v.version === i.version ? " · current" : ""}</span>
+                <Link href={`/gallery/${v.id}`} className="font-mono hover:text-accent">v{v.version}{v.version === i.version ? " · current" : ""}</Link>
                 <span className="font-mono text-xs text-muted">{v.version_hash.slice(0, 18)}…</span>
                 <span className="text-xs text-muted">{formatDate(v.created_at)}</span>
               </li>
@@ -69,9 +72,10 @@ function Detail({ i }: { i: InsightDetail }) {
             ) : <p className="text-muted">Not available yet.</p>}
           </div>
         </section>
+        <ProofPanel id={i.id} />
         <p className="text-xs text-muted">{DISCLAIMER}</p>
       </div>
-      <BorrowPanel insight={i} />
+      <TradePanel insight={i} />
     </div>
   );
 }
