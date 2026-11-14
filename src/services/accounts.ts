@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import type { Ctx } from "../context.ts";
 import { badRequest, forbidden, notFound, unauthorized } from "../errors.ts";
 import type { KeyCheckMode } from "../near/accessKeys.ts";
-import { newId, nowIso, sha256Hex } from "../util.ts";
+// Sessions and API keys run on real time (systemNowIso), so replaying a past market window never locks anyone out.
+import { newId, sha256Hex, systemNowIso } from "../util.ts";
 
 /**
  * What a credential may do. A wallet session has all three; an API key has the ones it was issued with.
@@ -91,7 +92,7 @@ export function revokeKey(ctx: Ctx, principal: Principal, keyId: string) {
   const row = ctx.db.prepare("SELECT * FROM api_keys WHERE id = ? AND account_id = ?").get(keyId, principal.account.id) as KeyRow | undefined;
   if (!row) throw notFound("API key");
   if (!row.revoked_at) {
-    row.revoked_at = nowIso();
+    row.revoked_at = systemNowIso();
     ctx.db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ?").run(row.revoked_at, row.id);
   }
   return keyView(row);
@@ -110,7 +111,7 @@ function authenticateSession(ctx: Ctx, token: string): Principal {
     | { id: string; account_id: string; key_check: KeyCheck; expires_at: string; revoked_at: string | null } | undefined;
   if (!row) throw unauthorized(CONNECT_WALLET);
   if (row.revoked_at) throw unauthorized("This session has been signed out. Connect your wallet again.");
-  if (row.expires_at <= nowIso()) throw unauthorized("This session has expired. Connect your wallet again.");
+  if (row.expires_at <= systemNowIso()) throw unauthorized("This session has expired. Connect your wallet again.");
   assertCheckedOnChainIfRequired(ctx, row.key_check);
   return {
     account: getAccount(ctx, row.account_id), via: "session", keyId: row.id, scopes: [...SCOPES], tokenIds: null,
@@ -122,9 +123,9 @@ function authenticateApiKey(ctx: Ctx, rawKey: string): Principal {
   const row = ctx.db.prepare("SELECT * FROM api_keys WHERE key_hash = ?").get(sha256Hex(rawKey)) as KeyRow | undefined;
   if (!row) throw unauthorized("Invalid API key. " + CONNECT_WALLET);
   if (row.revoked_at) throw unauthorized("This API key has been revoked");
-  if (row.expires_at && row.expires_at <= nowIso()) throw unauthorized("This API key has expired");
+  if (row.expires_at && row.expires_at <= systemNowIso()) throw unauthorized("This API key has expired");
   assertCheckedOnChainIfRequired(ctx, row.key_check);
-  ctx.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(nowIso(), row.id);
+  ctx.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(systemNowIso(), row.id);
   return {
     account: getAccount(ctx, row.account_id),
     via: "api_key",
@@ -190,7 +191,7 @@ function insertKey(
     expires_at: k.expiresAt,
     revoked_at: null,
     last_used_at: null,
-    created_at: nowIso(),
+    created_at: systemNowIso(),
   };
   ctx.db.prepare(
     `INSERT INTO api_keys (id, account_id, key_hash, key_prefix, label, scopes, token_ids, key_check, expires_at, created_at)

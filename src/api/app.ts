@@ -10,7 +10,8 @@ import { LlmExpiryEvaluator } from "../ai/llmExpiry.ts";
 import { type ExecutionVenue, SimulatedVenue } from "../execution/venue.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import { MockLedger } from "../ledger/mockLedger.ts";
-import { type MarketData, SimulatedMarketData } from "../market/marketData.ts";
+import { CoinGeckoMarketData, describeSource } from "../market/coinGecko.ts";
+import { type MarketData, SimulatedMarketData, key as marketKey } from "../market/marketData.ts";
 import { NearChain } from "../near/chain.ts";
 import { type ChainClient, NearRpcClient } from "../near/chainClient.ts";
 import { type AccessKeyChecker, NoAccessKeyCheck, RpcAccessKeyChecker } from "../near/accessKeys.ts";
@@ -29,11 +30,12 @@ import { confirmApproval, createQuote, getOrder, listOrders, placeOrder } from "
 import { closeTrade, getClosingOrder } from "../services/trades.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
 import { startEvaluationSweep } from "../services/evaluationSweep.ts";
+import { clockView, feedPriceFor, priceNow, resetClock, setClock } from "../services/replay.ts";
 import { subscribe, subscriptionStatus } from "../services/subscriptions.ts";
-import { amount, parseNear } from "../util.ts";
+import { amount, nowIso, parseNear } from "../util.ts";
 import { assertSameMachine, isSameMachine } from "./local.ts";
 import {
-  closeBody, depositBody, executionEventBody, issueKeyBody, nearCliConnectBody, orderBody, parse, publishBody, quoteBody, simBody,
+  clockBody, closeBody, depositBody, executionEventBody, issueKeyBody, nearCliConnectBody, orderBody, parse, publishBody, quoteBody, simBody,
   simPriceBody, updateMeBody, verifySignInBody,
 } from "./schemas.ts";
 
@@ -72,13 +74,18 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   const chain = config.ledger === "near" && config.near
     ? new NearChain(db, deps.chainClient ?? new NearRpcClient(config.near.contractId, config.nearRpcUrl), config.near)
     : null;
+  // Real prices from CoinGecko when configured, else the simulated feed. A feed passed in (by a test) wins.
+  const coinGecko = deps.market === undefined && config.marketFeed === "coingecko" ? new CoinGeckoMarketData(db, config.coinGeckoApiKey) : null;
+  /** Loads the saved candle windows into the feed's cache, so those windows need no network. */
+  const importSnapshots = () => (coinGecko && config.marketSnapshots ? coinGecko.importSnapshotDir(config.marketSnapshots) : 0);
+  const marketSnapshots = importSnapshots();
   const ctx: Ctx = {
     config,
     db,
     chain,
     ledger: deps.ledger ?? chain?.ledger ?? new MockLedger(db),
     venue: deps.venue ?? new SimulatedVenue(),
-    market: deps.market ?? new SimulatedMarketData(db),
+    market: deps.market ?? coinGecko ?? new SimulatedMarketData(db),
     accessKeys: deps.accessKeys
       ?? (config.walletKeyCheck === "none" ? new NoAccessKeyCheck() : new RpcAccessKeyChecker(config.nearRpcUrl)),
     mcp: new Map(),
@@ -132,6 +139,10 @@ export function createApp(config: Config, deps: AppDeps = {}) {
       storage: config.dbPath === ":memory:" ? "memory" : "file",
       // Whether ConDex's AI sets the expiry of a thesis published without one (otherwise its default applies).
       expiry_ai: ctx.expiryAi !== null,
+      // The price feed theses are judged on: "simulated", or "feed:<name>" for real prices.
+      market_data: ctx.market.name,
+      // "replay" while the dev replay clock is set: thesis and trade times are then a past window, not real time.
+      clock: clockView(),
       // Only for the test console on this computer: lets it print a ready-to-paste `claude mcp add`
       // command. The home folder is shown as $HOME, and the path is never sent to another machine.
       ...(config.devMode && isSameMachine(req) ? { mcp_server: displayPath(MCP_SERVER_PATH) } : {}),
@@ -332,6 +343,38 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     res.json(thesisProof(ctx, req.params.tokenId!));
   });
 
+  // The market's candles as the evaluation sees them, so an agent reasons from the data a thesis is judged on.
+  // Never past the current moment of the business clock: in a replay, nothing after the replayed time.
+  app.get("/v1/market/:market/candles", async (req, res) => {
+    auth(req);
+    const market = marketKey(req.params.market!);
+    const now = nowIso();
+    const instant = (name: "from" | "to", fallback: number) => {
+      const given = req.query[name];
+      if (given === undefined) return fallback;
+      const ms = typeof given === "string" ? Date.parse(given) : NaN;
+      if (Number.isNaN(ms)) throw badRequest("invalid_time", `${name} must be a time like 2026-08-19T15:22:00Z`);
+      return ms;
+    };
+    const toMs = Math.min(instant("to", Date.parse(now)), Date.parse(now));
+    // At most 1,000 one-minute candles per request. Without `from`, the last 30 minutes.
+    const fromMs = Math.max(instant("from", toMs - 30 * 60_000), toMs - 1000 * 60_000);
+    const from = new Date(fromMs).toISOString();
+    const to = new Date(toMs).toISOString();
+    if (!ctx.market.hasCandles(market, from, to)) {
+      await ctx.market.loadCandles(market, from, to).catch((err) => console.warn(`candles for ${market}: ${(err as Error).message}`));
+    }
+    res.json({
+      market, source: ctx.market.name,
+      /** The current moment as ConDex sees it. In a replay this is the replayed time: treat it as now. */
+      now, clock: clockView().mode, from, to,
+      /** false when the feed could not supply every candle of the window yet. */
+      complete: ctx.market.hasCandles(market, from, to),
+      candles: ctx.market.candles(market, from, to),
+      ...describeSource(ctx.market.name, market),
+    });
+  });
+
   // Full conversation and conditions: needs a read-scoped key and an active subscription (or being the creator).
   app.get("/v1/tokens/:tokenId", async (req, res) => {
     const p = auth(req);
@@ -434,11 +477,31 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   });
 
   // ---- dev / simulation (disabled unless CONDEX_DEV_MODE=true) ----
-  app.post("/v1/sim/orders/:orderId/:action", devOnly, (req, res) => {
+  app.post("/v1/sim/orders/:orderId/:action", devOnly, async (req, res) => {
     const type = SIM_ACTIONS[req.params.action as string];
     if (!type) throw notFound(`Simulation action "${req.params.action}"`);
     const body = parse(simBody, req.body);
-    res.status(201).json(simulate(ctx, req.params.orderId as string, type, body));
+    const orderId = req.params.orderId as string;
+    // With a real price feed, a fill or close given no price is made at the feed's current price.
+    if ((type === "fill" || type === "close") && body.price === undefined && ctx.market.name !== "simulated") {
+      body.price = await feedPriceFor(ctx, orderId);
+    }
+    res.status(201).json(simulate(ctx, orderId, type, body));
+  });
+
+  // The replay clock: freezes ConDex's business clock at a past moment so a real market window can be replayed.
+  app.get("/v1/dev/clock", devOnly, (req, res) => {
+    const market = typeof req.query.market === "string" ? req.query.market : null;
+    res.json({ ...clockView(), ...(market ? { price: priceNow(ctx, market) } : {}) });
+  });
+
+  app.post("/v1/dev/clock", devOnly, (req, res) => {
+    const body = parse(clockBody, req.body);
+    res.json({ ...setClock(ctx, body.now), ...(body.market ? { price: priceNow(ctx, body.market) } : {}) });
+  });
+
+  app.delete("/v1/dev/clock", devOnly, (_req, res) => {
+    res.json(resetClock());
   });
 
   // Prices for the simulated market data feed, which theses are evaluated against after their deadline.
@@ -449,7 +512,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     const body = parse(simPriceBody, req.body);
     res.status(201).json({
       source: ctx.market.name,
-      ...ctx.market.record(req.params.market as string, body.price, body.at ? new Date(body.at).toISOString() : new Date().toISOString()),
+      ...ctx.market.record(req.params.market as string, body.price, body.at ? new Date(body.at).toISOString() : nowIso()),
     });
   });
 
@@ -460,6 +523,8 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   app.post("/v1/dev/reset", devOnly, (_req, res) => {
     wipeDb(ctx.db);
     ctx.expiryAiUse.clear();
+    resetClock();
+    importSnapshots(); // the saved candle windows are not test data: put them back
     res.json({ ok: true });
   });
 
@@ -498,13 +563,15 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     res.status(500).json({ error: { code: "internal", message: "Internal server error" } });
   });
 
-  if (chain && deps.startChainSender !== false) {
+  const onChain = chain !== null && deps.startChainSender !== false;
+  if (onChain) {
     chain.sender.start();
-    // Expired theses are evaluated, and their evaluation sent to their token, without anyone opening them.
-    startEvaluationSweep(ctx);
     // Read the subscription terms once, so the free abstract can show them before anyone subscribes.
     chain.refreshSubscription(chain.client.contractId, true).catch((err) => console.error(`NEAR: could not read the subscription terms: ${String(err)}`));
   }
+  // Expired theses are evaluated without anyone opening them: on NEAR so the evaluation reaches their token,
+  // and with a real price feed because only this sweep fetches the prices an evaluation waits for.
+  if (onChain || coinGecko) startEvaluationSweep(ctx);
 
-  return { app, ctx };
+  return { app, ctx, marketSnapshots };
 }

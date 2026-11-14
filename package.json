@@ -13,6 +13,9 @@
     "mcp": "node --disable-warning=ExperimentalWarning src/mcp/server.ts",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts",
     "test:page": "node --disable-warning=ExperimentalWarning scripts/check-test-page.ts",
+    "snapshot": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/market-snapshot.ts",
+    "replay": "node --disable-warning=ExperimentalWarning scripts/replay.ts",
+    "testnet:pairs": "node --disable-warning=ExperimentalWarning scripts/testnet-pairs.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

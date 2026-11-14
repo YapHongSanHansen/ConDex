@@ -2,7 +2,7 @@ import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
 import { badRequest, forbidden, notFound } from "../errors.ts";
 import { formatDecimal, parseDecimal } from "../quantity.ts";
-import { amount, canonicalJson, newId, nowIso, parseNear, sha256Hex } from "../util.ts";
+import { amount, canonicalJson, newId, nowIso, parseNear, replayClock, sha256Hex } from "../util.ts";
 import { type AccountRow, type Principal, accountView, assertNearAccountId, getAccount, requireScope } from "./accounts.ts";
 import { accuracy, evaluateThesis, evaluationView, trackRecord, tradeResult } from "./evaluation.ts";
 import { type ExpirySetBy, type ResolvedExpiry, evaluationDeadline, resolveExpiry } from "./expiry.ts";
@@ -58,6 +58,8 @@ export interface VersionRow {
   target_price: string | null; expires_at: string; expiry_time_given: number;
   expiry_set_by: ExpirySetBy; expiry_reason: string | null; evaluation_deadline: string; messages: string; content_hash: string; mint_tx: string;
   created_at: string;
+  /** 1 when it was published while the dev replay clock was set: its times are a replayed past window, not real time. */
+  replayed: number;
 }
 
 interface Conditions {
@@ -199,6 +201,11 @@ export function getVersion(ctx: Ctx, tokenId: string): VersionRow {
   return row;
 }
 
+/** Which clock a version was published on: real time, or the dev replay of a past market window. */
+function clockOf(row: VersionRow): "real" | "replay" {
+  return row.replayed === 1 ? "replay" : "real";
+}
+
 /** After the expiry no fee is quoted and no new order is linked. Reading and existing orders are unaffected. */
 export function isExpired(row: VersionRow, at: string = nowIso()): boolean {
   return row.expires_at <= at;
@@ -233,6 +240,8 @@ export function thesisProof(ctx: Ctx, tokenId: string) {
       version: row.version,
       creator,
       published_at: row.created_at,
+      /** "replay": published under the dev replay clock, so its times are a replayed past window, not real time. */
+      clock: clockOf(row),
       expires_at: row.expires_at,
       evaluation_deadline: row.evaluation_deadline,
       expiry: expiryView(row),
@@ -395,13 +404,14 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
   ctx.db.prepare(
     `INSERT INTO insight_versions (token_id, insight_id, version, creator_id, payout_account, fee_yocto, title, summary,
        market, direction, entry, invalidation, target, entry_price, invalidation_price, target_price, expires_at,
-       expiry_time_given, expiry_set_by, expiry_reason, evaluation_deadline, messages, content_hash, mint_tx, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       expiry_time_given, expiry_set_by, expiry_reason, evaluation_deadline, messages, content_hash, mint_tx, created_at, replayed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     tokenId, insightId, version, principal.account.id, p.payoutAccount, p.feeYocto.toString(), p.title, p.summary,
     p.market, p.direction, p.entry, p.invalidation, p.target, p.levels.entry_price, p.levels.invalidation_price,
     p.levels.target_price, p.expiry.expiresAt, p.expiry.timeGiven ? 1 : 0,
     p.expiry.setBy, p.expiry.reason, p.evaluationDeadline, stored.messages, contentHash, tx, createdAt,
+    replayClock() === null ? 0 : 1,
   );
   const row = getVersion(ctx, tokenId);
   // The creator is told when ConDex had to set the expiry, so they can publish a version with their own.
@@ -445,6 +455,7 @@ function previewView(ctx: Ctx, r: VersionRow, score = creatorScore(ctx, r.creato
     direction: r.direction,
     summary: r.summary,
     published_at: r.created_at,
+    clock: clockOf(r),
     expires_at: r.expires_at,
     expired: isExpired(r),
     expiry: expiryView(r),

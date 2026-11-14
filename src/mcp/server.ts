@@ -143,6 +143,23 @@ export function buildMcpServer(opts: McpOptions): McpServer {
     inputSchema: { token_id: z.string().describe("Token id, e.g. ins_...-v1") },
   }, ({ token_id }) => call("GET", `/v1/tokens/${encodeURIComponent(token_id)}/proof`));
 
+  server.registerTool("condex_get_candles", {
+    title: "Get candles",
+    description:
+      "One-minute price candles (open, high, low, close, volume) of a market, from the same feed ConDex judges a thesis on. " +
+      "Use it to reason about a thesis before publishing or trading. The result's `now` is the current time as ConDex sees it: " +
+      "treat it as now when you choose an expiry or an evaluation deadline. When `clock` is \"replay\", ConDex is replaying a " +
+      "past market window, `now` is a past moment, and no candle after it is shown. Without `from`, the last 30 minutes.",
+    inputSchema: {
+      market: z.string().describe("The market, e.g. ETH-USD"),
+      from: z.string().optional().describe("Start of the window, ISO 8601, e.g. 2026-08-19T15:00:00Z. Default: 30 minutes before `to`"),
+      to: z.string().optional().describe("End of the window, ISO 8601. Default and latest: ConDex's current time"),
+    },
+  }, ({ market, from, to }) => {
+    const query = new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) }).toString();
+    return call("GET", `/v1/market/${encodeURIComponent(market)}/candles${query ? `?${query}` : ""}`);
+  });
+
   server.registerTool("condex_read_insight", {
     title: "Read insight",
     description:

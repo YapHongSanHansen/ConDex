@@ -198,12 +198,12 @@ try {
     const waiting = String(await page.eval(`document.getElementById("mcp-status-text").textContent`));
     if (!/Waiting for Claude Code/.test(waiting)) throw new Error(`status says "${waiting}"`);
     const tools = await page.eval(`document.querySelectorAll("#mcp-tools li").length`);
-    if (tools !== 15) throw new Error(`the dialog lists ${tools} tools, expected 15`);
+    if (tools !== 16) throw new Error(`the dialog lists ${tools} tools, expected 16`);
     await shot("4-mcp-dialog");
     await page.eval(`document.getElementById("mcp-dialog").close()`);
     const focused = await page.eval(`document.activeElement?.id`);
     if (focused !== "wallet-btn") throw new Error(`after closing the dialog, focus is on ${focused}`);
-    return "key works for publish, read and trade; 11 tools listed; focus returns to the wallet button";
+    return "key works for publish, read and trade; 16 tools listed; focus returns to the wallet button";
   });
 
   await check("README demo buttons keep your wallet and MCP key (no hidden reset)", async () => {

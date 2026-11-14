@@ -1,5 +1,6 @@
 import type { Ctx } from "../context.ts";
 import { badRequest } from "../errors.ts";
+import { nowMs } from "../util.ts";
 
 /** Who set a thesis's expiry: its creator, ConDex's AI, or ConDex's default when the AI did not set one. */
 export type ExpirySetBy = "creator" | "condex_ai" | "condex_default";
@@ -114,7 +115,7 @@ export function evaluationDeadline(given: string | null, expiresAt: string): str
  * The creator's own expiry, if they gave one: a date with an optional UTC time, or a full instant.
  * null when they gave none, so ConDex sets it. Throws when what they gave is unusable.
  */
-export function creatorExpiry(given: ExpiryInput, now = new Date()): { expiresAt: string; timeGiven: boolean } | null {
+export function creatorExpiry(given: ExpiryInput, now = new Date(nowMs())): { expiresAt: string; timeGiven: boolean } | null {
   let at: Date;
   let timeGiven = true;
   if (given.date !== null) {
@@ -150,7 +151,7 @@ export async function resolveExpiry(
   given: ExpiryInput,
   thesis: Omit<ThesisForExpiry, "now">,
 ): Promise<ResolvedExpiry> {
-  const now = new Date();
+  const now = new Date(nowMs());
   const own = creatorExpiry(given, now);
   if (own) return { ...own, setBy: "creator", reason: null };
 
@@ -179,7 +180,7 @@ function usableInstant(answer: string, asked: Date): string {
   const at = Date.parse(answer);
   if (Number.isNaN(at)) throw new Error("it gave an expiry that is not a date");
   // The evaluation took time, so compare with the clock as it is now.
-  if (at <= Date.now()) throw new Error(`it chose ${new Date(at).toISOString()}, which has already passed`);
+  if (at <= nowMs()) throw new Error(`it chose ${new Date(at).toISOString()}, which has already passed`);
   if (at > asked.getTime() + MAX_AI_EXPIRY_DAYS * DAY_MS) {
     throw new Error(`it chose an expiry more than ${MAX_AI_EXPIRY_DAYS} days away`);
   }

@@ -3,7 +3,8 @@ import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
 import { ApiError, badRequest, unauthorized } from "../errors.ts";
 import { verifyNep413 } from "../near/nep413.ts";
-import { newId, nowIso, sha256Hex } from "../util.ts";
+// Sign-in runs on real time (systemNowIso), so replaying a past market window never ends a session.
+import { newId, sha256Hex, systemNowIso } from "../util.ts";
 import { type AccountRow, accountView, assertNearAccountId } from "./accounts.ts";
 
 interface ChallengeRow { nonce: string; message: string; recipient: string; expires_at: string; used_at: string | null }
@@ -90,7 +91,7 @@ export async function verifySignIn(ctx: Ctx, input: SignInInput) {
   const challenge = ctx.db.prepare("SELECT * FROM auth_challenges WHERE nonce = ?").get(input.nonce) as ChallengeRow | undefined;
   if (!challenge) throw unauthorized("Unknown sign-in challenge. Request a new one.");
   if (challenge.used_at) throw unauthorized("This sign-in challenge was already used. Request a new one.");
-  if (challenge.expires_at <= nowIso()) throw unauthorized("This sign-in challenge has expired. Request a new one.");
+  if (challenge.expires_at <= systemNowIso()) throw unauthorized("This sign-in challenge has expired. Request a new one.");
 
   // Accept the signature with or without the callbackUrl, because a website may send the callbackUrl
   // whichever way the wallet opened. Both forms are bound to this server's nonce, message and recipient.
@@ -112,7 +113,7 @@ export async function verifySignIn(ctx: Ctx, input: SignInInput) {
 
   return transaction(ctx.db, () => {
     // Re-check inside the transaction so two concurrent requests cannot both use the challenge.
-    const used = ctx.db.prepare("UPDATE auth_challenges SET used_at = ? WHERE nonce = ? AND used_at IS NULL").run(nowIso(), challenge.nonce);
+    const used = ctx.db.prepare("UPDATE auth_challenges SET used_at = ? WHERE nonce = ? AND used_at IS NULL").run(systemNowIso(), challenge.nonce);
     if (used.changes === 0) throw unauthorized("This sign-in challenge was already used. Request a new one.");
 
     let account = ctx.db.prepare("SELECT * FROM accounts WHERE near_account_id = ?").get(input.accountId) as AccountRow | undefined;
@@ -123,7 +124,7 @@ export async function verifySignIn(ctx: Ctx, input: SignInInput) {
         near_account_id: input.accountId,
         display_name: input.displayName?.trim() || input.accountId,
         dev_public_key: pinKeys ? input.publicKey : null,
-        created_at: nowIso(),
+        created_at: systemNowIso(),
       };
       ctx.db.prepare("INSERT INTO accounts (id, near_account_id, display_name, dev_public_key, created_at) VALUES (?, ?, ?, ?, ?)")
         .run(account.id, account.near_account_id, account.display_name, account.dev_public_key, account.created_at);
@@ -141,7 +142,7 @@ export async function verifySignIn(ctx: Ctx, input: SignInInput) {
       }
     }
 
-    ctx.db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(nowIso());
+    ctx.db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(systemNowIso());
     const token = `cdxs_${randomBytes(32).toString("base64url")}`;
     const session = {
       id: newId("sess"),
@@ -150,7 +151,7 @@ export async function verifySignIn(ctx: Ctx, input: SignInInput) {
     ctx.db.prepare(
       `INSERT INTO sessions (id, account_id, token_hash, public_key, key_check, expires_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(session.id, account.id, sha256Hex(token), input.publicKey, ctx.accessKeys.mode, session.expires_at, nowIso());
+    ).run(session.id, account.id, sha256Hex(token), input.publicKey, ctx.accessKeys.mode, session.expires_at, systemNowIso());
 
     return {
       account: accountView(account),
@@ -175,6 +176,6 @@ function isAllowedCallback(ctx: Ctx, callbackUrl: string): boolean {
 }
 
 export function signOut(ctx: Ctx, sessionId: string) {
-  ctx.db.prepare("UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(nowIso(), sessionId);
+  ctx.db.prepare("UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(systemNowIso(), sessionId);
   return { ok: true };
 }

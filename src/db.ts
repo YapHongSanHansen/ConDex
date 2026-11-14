@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS insight_versions (
   content_hash      TEXT NOT NULL,
   mint_tx           TEXT NOT NULL,
   created_at        TEXT NOT NULL,
+  replayed          INTEGER NOT NULL DEFAULT 0,  -- 1: published while the dev replay clock was set, so its times are replayed, not real
   UNIQUE (insight_id, version)
 );
 
@@ -295,6 +296,32 @@ CREATE TABLE IF NOT EXISTS market_prices (
 );
 CREATE INDEX IF NOT EXISTS market_prices_by_time ON market_prices (market, at);
 
+-- Candles fetched from a live market data feed (src/market/coinGecko.ts), kept locally so the evaluation
+-- never waits on the network. Prices are decimal text.
+CREATE TABLE IF NOT EXISTS market_candles (
+  source      TEXT NOT NULL,           -- the feed's name, e.g. "feed:coingecko"
+  market      TEXT NOT NULL,
+  interval_s  INTEGER NOT NULL,        -- candle length in seconds
+  start_s     INTEGER NOT NULL,        -- Unix seconds: when the candle starts
+  open        TEXT NOT NULL,
+  high        TEXT NOT NULL,
+  low         TEXT NOT NULL,
+  close       TEXT NOT NULL,
+  volume      TEXT NOT NULL,
+  PRIMARY KEY (source, market, interval_s, start_s)
+);
+
+-- The time ranges whose candles are all in market_candles. A minute with no trades has no candle, so a
+-- missing candle inside a covered range means "no trades" and outside one means "not fetched yet".
+CREATE TABLE IF NOT EXISTS market_coverage (
+  source      TEXT NOT NULL,
+  market      TEXT NOT NULL,
+  interval_s  INTEGER NOT NULL,
+  from_s      INTEGER NOT NULL,        -- Unix seconds: the first candle start covered
+  to_s        INTEGER NOT NULL,        -- Unix seconds: candle starts before this are covered
+  PRIMARY KEY (source, market, interval_s, from_s)
+);
+
 -- Recorded once, after the evaluation deadline, and never changed.
 CREATE TABLE IF NOT EXISTS thesis_evaluations (
   token_id          TEXT PRIMARY KEY REFERENCES insight_versions(token_id),
@@ -315,7 +342,7 @@ CREATE TABLE IF NOT EXISTS thesis_evaluations (
 
 const ALL_TABLES = [
   "chain_subscriptions", "chain_outbox",
-  "thesis_evaluations", "market_prices",
+  "thesis_evaluations", "market_prices", "market_coverage", "market_candles",
   "ledger_txs", "ledger_subscriptions", "ledger_reserves", "ledger_tokens", "ledger_balances",
   "subscriptions", "closing_events", "closing_orders", "receipts", "execution_events", "orders", "quotes", "reads",
   "insight_versions", "insights", "sessions", "auth_challenges", "api_keys", "accounts",
