@@ -1,8 +1,8 @@
 // Converts what the backend sends (`wire.ts`) into the shapes the pages already use (`types.ts`).
 // Keeping this in one place means a backend change touches this file, not every page.
 
-import type { Horizon, Insight, InsightDetail, InsightVersion, KeyRow, Stats } from "./types";
-import type { McpState, TokenPreview, WireKey } from "./wire";
+import type { Horizon, Insight, InsightDetail, InsightVersion, KeyRow, Receipt, Stats } from "./types";
+import type { McpState, PlatformStats, TokenPreview, WireKey, WireReceipt } from "./wire";
 
 const HOUR = 3_600_000;
 
@@ -20,10 +20,13 @@ export function tokenToInsight(t: TokenPreview): Insight {
     horizon: horizonOf(t),
     price: Number(t.fee_per_filled_order.near),
     expires_at: t.expires_at,
+    evaluation_deadline: t.expiry.evaluation_deadline,
     version: t.version,
     creator: t.creator.near_account_id,
     status: t.expired ? "expired" : "live",
     created_at: t.published_at,
+    direction: t.direction,
+    title: t.title,
   };
 }
 
@@ -41,13 +44,26 @@ export function tokenToDetail(t: TokenPreview, siblings: TokenPreview[]): Insigh
   const versions: InsightVersion[] = siblings
     .filter((s) => s.insight_id === t.insight_id)
     .sort((a, b) => a.version - b.version)
-    .map((s) => ({ version: s.version, version_hash: s.content_hash, created_at: s.published_at }));
-  return { ...tokenToInsight(t), version_hash: t.content_hash, register_tx_hash: t.mint.tx, versions };
+    .map((s) => ({ id: s.token_id, version: s.version, version_hash: s.content_hash, created_at: s.published_at }));
+  const acc = t.author_score.accuracy;
+  return {
+    ...tokenToInsight(t), version_hash: t.content_hash, register_tx_hash: t.mint.tx, versions, summary: t.summary,
+    accuracy_pct: acc.accuracy_pct, judged: acc.evaluated,
+  };
 }
 
-/** The backend has no stats route yet. These are the figures it can give. The others are null, which the page shows as unknown. */
-export function statsFromTokens(tokens: TokenPreview[]): Stats {
-  return { insights_listed: latestVersions(tokens).filter((t) => !t.expired).length, borrows_today: null, paid_to_creators: null };
+/** GET /v1/stats. */
+export function toStats(p: PlatformStats): Stats {
+  return { insights_listed: p.insights_live, trades_today: p.trades_linked_24h, paid_to_creators: Number(p.fees_paid_to_creators.near) };
+}
+
+/** A receipt with the market and version of its thesis, which the receipt itself does not carry. */
+export function toReceipt(r: WireReceipt, token: TokenPreview | undefined, myAccountId: string): Receipt {
+  return {
+    id: r.id, date: r.created_at, insight_id: r.token_id, market: token?.market ?? "unknown market", version: token?.version ?? 0,
+    order_id: r.order_id, fee: Number(r.fee.near), evidence: r.evidence_label, tx_hash: r.settlement.tx, ledger: r.settlement.ledger,
+    role: r.creator_id === myAccountId ? "earned" : "paid",
+  };
 }
 
 export function toKeyRow(k: WireKey & { mcp?: McpState | null }): KeyRow {

@@ -98,10 +98,38 @@ export interface KeyWithMcp extends WireKey { mcp: McpState | null }
 /** GET /v1/mcp/tools */
 export interface McpTool { name: string; title: string; description: string }
 
+// ---- scores, subscription, stats ----
+
+/** Of the author's theses that were judged, the share whose conditions were met. */
+export interface Accuracy { evaluated: number; met: number; accuracy_pct: number | null; pending: number; not_judged: number }
+
+/** What real, fully closed trades of the author's theses returned. Before trading costs. */
+export interface TrackRecord { trades: number; net_return_pct: number; net_profit_usd: number; max_drawdown_pct: number; costs: string }
+
+export interface Score { accuracy: Accuracy; borrowers: TrackRecord }
+
+export interface SubscriptionTerms { fee: Money; period_days: number; paid_to: string; unlocks: string; how: string }
+
+/** GET and POST /v1/subscription. */
+export interface SubscriptionStatus {
+  account_id: string;
+  active: boolean;
+  subscribed_until: string | null;
+  terms: SubscriptionTerms;
+  /** Only on POST: the payment just made. */
+  payment?: { id: string; starts_at: string; ends_at: string; paid: Money; ledger: string; tx: string };
+}
+
+/** GET /v1/stats. Public. */
+export interface PlatformStats { insights_live: number; trades_linked_24h: number; fees_paid_to_creators: Money }
+
 // ---- theses ----
+
 
 export interface Expiry {
   expires_at: string;
+  /** Market prices up to here are used to judge the thesis. The same as `expires_at` unless the creator set a later one. */
+  evaluation_deadline: string;
   /** UTC calendar day, "YYYY-MM-DD". */
   date: string;
   /** UTC time, "HH:MM:SS". */
@@ -141,8 +169,10 @@ export interface TokenPreview {
   payout_account: string;
   /** The usage fee, charged once on the first fill of a linked order. */
   fee_per_filled_order: Money;
-  /** Reading is always free. */
-  read_fee: Money;
+  /** The author's public score. */
+  author_score: Score;
+  /** What a subscription costs and what it unlocks. */
+  unlock: SubscriptionTerms;
   content_hash: string;
   mint: { ledger: string; tx: string };
   created_at: string;
@@ -167,6 +197,11 @@ export interface PublishBody {
   expiry_date?: string | null;
   expiry_time?: string | null;
   expires_at?: string | null;
+  /** A date or an ISO date-time, on or after the expiry and at most 30 days later. Defaults to the expiry. */
+  evaluation_deadline?: string | null;
+  entry_price?: string | null;
+  invalidation_price?: string | null;
+  target_price?: string | null;
   fee_near: string | number;
   payout_account?: string | null;
   messages: Array<{ role: "user" | "assistant" | "system" | "tool"; content: string; at?: string }>;
@@ -183,6 +218,7 @@ export interface ReadInsight extends PublishedToken {
 /** GET /v1/publishers/:nearAccountId */
 export interface PublisherProfile {
   publisher: WireAccount;
+  score: Score;
   stats: { insights: number; reads: number; paid_orders: number; fees_paid: Money; payout_accounts: string[] };
   tokens: TokenPreview[];
 }
@@ -223,6 +259,7 @@ export interface ThesisProof {
     creator: WireAccount;
     published_at: string;
     expires_at: string;
+    evaluation_deadline: string;
     expiry: Expiry;
     content_hash: string;
     /** false means the stored content no longer matches its hash. */
@@ -231,8 +268,36 @@ export interface ThesisProof {
     payout_account: string;
     mint: { ledger: string; tx: string };
   };
+  /** Whether the thesis's conditions were met, judged once against market data after the evaluation deadline. */
+  evaluation: Evaluation;
   proofs_of_trade: ProofOfTrade[];
+  /** The closed trades of this thesis added up. */
+  verified_results: TrackRecord;
 }
+
+export type EvaluationOutcome =
+  | "target_hit" | "invalidated" | "not_triggered" | "target_missed" | "in_direction" | "against_direction"
+  | "already_reached" | "no_data";
+
+export type Evaluation =
+  | { status: "pending"; deadline: string; source: string }
+  | {
+      status: "evaluated";
+      outcome: EvaluationOutcome;
+      /** null when the thesis could not be judged. */
+      conditions_met: boolean | null;
+      explanation: string;
+      reference_price: string | null;
+      final_price: string | null;
+      entered_at: string | null;
+      target_hit_at: string | null;
+      invalidated_at: string | null;
+      prices_used: number;
+      source: string;
+      deadline: string;
+      evaluated_at: string;
+      recorded: { ledger: string; tx: string | null };
+    };
 
 export interface ProofOfTrade {
   receipt_id: string;
@@ -309,6 +374,8 @@ export interface Order {
     checked: string[];
   };
   fee: Money;
+  /** On NEAR, the approval the trader still has to sign. null on the mock ledger. */
+  approval: unknown;
   settlement: {
     status: "pending" | "settled" | "released" | string;
     receipt_id: string | null;

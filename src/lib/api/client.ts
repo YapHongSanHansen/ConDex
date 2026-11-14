@@ -54,7 +54,7 @@ interface RequestOptions {
 const STATUS_CODES: Record<number, ApiErrorCode> = {
   400: "validation",
   401: "unauthorized",
-  402: "over_budget",
+  402: "insufficient_funds",
   403: "key_invalid",
   404: "not_found",
   409: "validation",
@@ -68,6 +68,8 @@ const BACKEND_CODES: Record<string, ApiErrorCode> = {
   missing_scope: "missing_scope",
   token_not_in_scope: "missing_scope",
   wallet_session_required: "session_required",
+  subscription_required: "subscription_required",
+  insufficient_balance: "insufficient_funds",
   quote_expired: "quote_expired",
   quote_used: "quote_expired",
   insight_expired: "insight_expired",

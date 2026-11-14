@@ -1,18 +1,19 @@
 // @mock-remove — delete after the backend is connected
 import { ApiError } from "@/lib/api/errors";
-import type { Api, Borrow, Earnings, Insight, InsightDetail, KeyRow, ListInsightsParams, PendingExport, Receipt } from "@/lib/api/types";
-import type { IssuedKey, McpTool, WireAccount } from "@/lib/api/wire";
-import { MOCK_BORROWS, MOCK_EXPORTS, MOCK_INSIGHTS, MOCK_ME, MOCK_MY_INSIGHTS, MOCK_PRIVATE_TEXT, MOCK_RECEIPTS } from "./data";
+import type { Api, Insight, InsightDetail, KeyRow, ListInsightsParams, Receipt } from "@/lib/api/types";
+import type { ClosingOrder, IssuedKey, McpTool, Order, Quote, SubscriptionStatus, WireAccount } from "@/lib/api/wire";
+import { MOCK_INSIGHTS, MOCK_ME, MOCK_PRIVATE_TEXT } from "./data";
 
 // Mutable in-memory state so borrow/revoke/publish visibly change the UI.
 const MOCK_FAIL_RATE = Number(process.env.NEXT_PUBLIC_MOCK_FAIL_RATE ?? "0");
 
 const insights = [...MOCK_INSIGHTS];
-const borrows = MOCK_BORROWS.map((b) => ({ ...b }));
-const receipts = [...MOCK_RECEIPTS];
-const myInsights = [...MOCK_MY_INSIGHTS];
-let payoutAccount = MOCK_ME;
-const exportsList = MOCK_EXPORTS.map((e) => ({ ...e }));
+const receipts: Receipt[] = [];
+const orders: Order[] = [];
+const quotes = new Map<string, Quote>();
+let subscribedUntil: string | null = null;
+let balance = 5; // test NEAR on the mock ledger
+let earned = 0;
 // Keys and sign-in, in the backend's own shapes (see wire.ts), so the pages never notice the switch.
 const mockKeys: Array<KeyRow & { secret: string }> = [];
 const MOCK_TOOLS: McpTool[] = [
@@ -31,7 +32,6 @@ const MOCK_TOOLS: McpTool[] = [
 /** A key without its secret, which is never listed. */
 const toRow = (k: KeyRow & { secret: string }): KeyRow => ({ id: k.id, prefix: k.prefix, label: k.label, scopes: [...k.scopes], createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revoked: k.revoked, mcp: k.mcp });
 const MOCK_ACCOUNT = (id: string): WireAccount => ({ id: "acct_mock", near_account_id: id, display_name: id, created_at: new Date().toISOString() });
-const keys = new Map<string, string>(); // borrow id -> issued key (memory only)
 let counter = 100;
 
 async function delay<T>(fn: () => T, canFail = true): Promise<T> {
@@ -42,23 +42,17 @@ async function delay<T>(fn: () => T, canFail = true): Promise<T> {
   return fn();
 }
 
-const toPreview = ({ id, market, horizon, price, expires_at, version, creator, status, created_at }: InsightDetail): Insight => ({
-  id, market, horizon, price, expires_at, version, creator, status, created_at,
+const toPreview = ({ id, market, horizon, price, expires_at, evaluation_deadline, version, creator, status, created_at, direction, title }: InsightDetail): Insight => ({
+  id, market, horizon, price, expires_at, evaluation_deadline, version, creator, status, created_at, direction, title,
 });
 
 const PAGE = 6;
 
 function find(id: string): InsightDetail {
-  const i = insights.find((x) => x.id === id);
+  const i = insights.find((x) => x.id === id.replace(/-v\d+$/, ""));
   if (!i) throw new ApiError("not_found", "No such insight");
   return i;
 }
-function findBorrow(id: string): Borrow {
-  const b = borrows.find((x) => x.id === id);
-  if (!b) throw new ApiError("not_found", "No such borrow");
-  return b;
-}
-
 function filterInsights(p: ListInsightsParams): InsightDetail[] {
   const now = Date.now();
   let out = insights.filter((i) => {
@@ -78,9 +72,40 @@ function filterInsights(p: ListInsightsParams): InsightDetail[] {
   return out;
 }
 
-function earnings(): Earnings {
-  const sum = (s: Receipt["status"]) => receipts.filter((r) => r.status === s).reduce((a, r) => a + r.fee, 0);
-  return { total_earned: sum("settled"), pending: sum("pending"), released: sum("released"), payout_account: payoutAccount };
+const money = (n: number) => ({ yocto: String(Math.round(n * 1e6)) + "0".repeat(18), near: String(n) });
+const FEE_SUB = 1;
+
+function subscriptionStatus(): SubscriptionStatus {
+  const active = !!subscribedUntil && new Date(subscribedUntil).getTime() > Date.now();
+  return {
+    account_id: MOCK_ME, active, subscribed_until: active ? subscribedUntil : null,
+    terms: { fee: money(FEE_SUB), period_days: 30, paid_to: "condex-treasury.testnet", unlocks: "Every thesis's conditions and conversation. Trading needs no subscription.", how: "POST /v1/subscription" },
+  };
+}
+
+function findOrder(id: string): Order {
+  const o = orders.find((x) => x.id === id);
+  if (!o) throw new ApiError("not_found", "No such order");
+  return o;
+}
+
+/** The trade of an order: open until closing fills add up to what was filled. */
+function tradeOf(o: Order): Order["trade"] {
+  const opened = Number(o.filled_quantity);
+  if (opened <= 0) return null;
+  const closed = o.closing_orders.reduce((a, c) => a + Number(c.filled_quantity), 0);
+  const fills = o.closing_orders.flatMap((c) => c.fills);
+  const dir = o.side === "buy" ? "long" : "short";
+  const last = fills.at(-1) ?? null;
+  const entry = Number(o.execution_events.find((e) => e.type === "fill")?.price ?? 0);
+  const exit = last ? Number(last.price) : 0;
+  const done = closed >= opened;
+  const pnl = (dir === "long" ? exit - entry : entry - exit) * opened;
+  return {
+    status: done ? "closed" : closed > 0 ? "partially_closed" : "open", direction: dir, opened_quantity: String(opened),
+    closed_quantity: String(closed), open_quantity: String(opened - closed), closing_fills: fills, closing_fill: last,
+    result: done ? { available: true, entry_price: String(entry), exit_price: String(exit), quantity: String(opened), pnl: String(pnl), return_pct: String(Math.round((pnl / (entry * opened)) * 1e4) / 100), outcome: pnl > 0 ? "win" : pnl < 0 ? "loss" : "flat" } : null,
+  };
 }
 
 export const MOCK_API: Api = {
@@ -96,80 +121,121 @@ export const MOCK_API: Api = {
     getStats: () =>
       delay(() => ({
         insights_listed: insights.filter((i) => i.status === "live").length,
-        borrows_today: 14 + borrows.length,
-        paid_to_creators: 31.4,
+        trades_today: 14 + orders.length,
+        paid_to_creators: 31.4 + earned,
       })),
   },
-  borrows: {
-    createBorrow: (insightId, input) =>
+  trading: {
+    subscription: () => delay(subscriptionStatus),
+    subscribe: () =>
       delay(() => {
-        const ins = find(insightId);
-        if (ins.status === "revoked") throw new ApiError("insight_revoked", "revoked");
-        if (input.fee_cap < ins.price) throw new ApiError("over_budget", "cap below fee");
-        const id = `bor_${++counter}`;
-        const borrow: Borrow = {
-          id, insight_id: ins.id, market: ins.market, insight_version: ins.version, status: "active",
-          fee_cap: input.fee_cap, charged: 0, created_at: new Date().toISOString(),
-          expires_at: new Date(Math.min(new Date(ins.expires_at).getTime(), Date.now() + 24 * 3600 * 1000)).toISOString(),
-          retrieved_at: null, receipt_id: null,
+        if (balance < FEE_SUB) throw new ApiError("insufficient_funds", "Not enough test NEAR");
+        balance -= FEE_SUB;
+        subscribedUntil = new Date(Date.now() + 30 * 86_400_000).toISOString();
+        return subscriptionStatus();
+      }),
+    deposit: (amount) => delay(() => { balance += Number(amount); return { ledger: "mock", account: MOCK_ME, available: money(balance), reserved: money(0), earned: money(earned) }; }),
+    balances: (account) => delay(() => ({ ledger: "mock", account, available: money(balance), reserved: money(orders.filter((o) => o.settlement.status === "pending").length * 0.5), earned: money(earned) })),
+    read: (tokenId) =>
+      delay(() => {
+        const i = find(tokenId);
+        if (!subscriptionStatus().active && i.creator !== MOCK_ME) throw new ApiError("subscription_required", "A subscription unlocks the full thesis.");
+        return {
+          token_id: i.id, insight_id: i.id, version: i.version, title: i.title, market: i.market, direction: i.direction, summary: i.summary,
+          published_at: i.created_at, expires_at: i.expires_at, expired: i.status !== "live",
+          expiry: { expires_at: i.expires_at, evaluation_deadline: i.evaluation_deadline, date: i.expires_at.slice(0, 10), time: i.expires_at.slice(11, 19), time_given: true, set_by: "creator" as const, reason: null },
+          message_count: 2, creator: MOCK_ACCOUNT(i.creator), payout_account: i.creator, fee_per_filled_order: money(i.price),
+          author_score: { accuracy: { evaluated: 0, met: 0, accuracy_pct: null, pending: 1, not_judged: 0 }, borrowers: { trades: 0, net_return_pct: 0, net_profit_usd: 0, max_drawdown_pct: 0, costs: "" } },
+          unlock: subscriptionStatus().terms, content_hash: i.version_hash, mint: { ledger: "mock", tx: "mocktx" }, created_at: i.created_at,
+          conditions: { market: i.market, direction: i.direction, entry: "A 15-minute candle closes back below the prior session high.", invalidation: "A 1-hour close above the sweep high.", target: null },
+          messages: [{ role: "user" as const, content: "Is the breakout real?" }, { role: "assistant" as const, content: MOCK_PRIVATE_TEXT.default }],
+          integrity: { content_hash: i.version_hash, recomputed_hash: i.version_hash, matches: true },
+          charge: money(0), your_reads: { count: 1, total_charged: money(0) },
         };
-        borrows.unshift(borrow);
-        const api_key = `cdx_test_MOCK${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
-        keys.set(id, api_key);
-        return { borrow, api_key };
       }),
-    listBorrows: () => delay(() => borrows.map((b) => ({ ...b }))),
-    getBorrow: (id) => delay(() => ({ ...findBorrow(id) })),
-    revokeBorrow: (id) =>
+    proof: (tokenId) =>
       delay(() => {
-        const b = findBorrow(id);
-        if (b.status === "active") b.status = "revoked";
-        return { ...b };
+        const i = find(tokenId);
+        const mine = orders.filter((o) => o.token_id === tokenId);
+        return {
+          proof_of_thesis: {
+            token_id: i.id, insight_id: i.id, version: i.version, creator: MOCK_ACCOUNT(i.creator), published_at: i.created_at, expires_at: i.expires_at,
+            evaluation_deadline: i.evaluation_deadline,
+            expiry: { expires_at: i.expires_at, evaluation_deadline: i.evaluation_deadline, date: i.expires_at.slice(0, 10), time: i.expires_at.slice(11, 19), time_given: true, set_by: "creator" as const, reason: null },
+            content_hash: i.version_hash, preserved: true, usage_fee_per_filled_trade: money(i.price), payout_account: i.creator, mint: { ledger: "mock", tx: "mocktx" },
+          },
+          evaluation: { status: "pending" as const, deadline: i.evaluation_deadline, source: "simulated" },
+          proofs_of_trade: mine.filter((o) => Number(o.filled_quantity) > 0).map((o) => ({
+            receipt_id: o.settlement.receipt_id ?? "", thesis: { token_id: i.id, content_hash: i.version_hash }, trader: MOCK_ME, role: "borrower" as const,
+            order: { id: o.id, market: o.market, side: o.side, quantity: o.quantity, authorised_at: o.created_at, status: o.status },
+            fill: { at: o.updated_at, price: o.execution_events.find((e) => e.type === "fill")?.price ?? "0", quantity: o.filled_quantity, source: "simulated" },
+            fee_paid: o.fee, settlement: { ledger: "mock", tx: "mocktx" }, trade: o.trade!, closing_fill: o.trade?.closing_fill ?? null, proven_at: o.updated_at,
+          })),
+          verified_results: { trades: mine.filter((o) => o.trade?.status === "closed").length, net_return_pct: 0, net_profit_usd: 0, max_drawdown_pct: 0, costs: "Before trading costs." },
+        };
       }),
-    retrieveInsight: (borrowId, apiKey) =>
+    quote: (tokenId) =>
       delay(() => {
-        const b = findBorrow(borrowId);
-        const issued = keys.get(borrowId);
-        // Seeded borrows have no issued key; accept any non-empty key for the demo.
-        if (issued && issued !== apiKey) throw new ApiError("key_invalid", "bad key");
-        if (!apiKey) throw new ApiError("key_invalid", "no key");
-        if (b.status === "revoked") throw new ApiError("insight_revoked", "revoked");
-        if (b.status === "expired" || new Date(b.expires_at).getTime() < Date.now()) throw new ApiError("key_expired", "expired");
-        const repeat = b.status !== "active";
-        if (!repeat) {
-          b.status = "retrieved";
-          b.retrieved_at = new Date().toISOString();
+        const i = find(tokenId);
+        if (i.status !== "live") throw new ApiError("insight_expired", "expired");
+        const q: Quote = { quote_id: `quote_${++counter}`, token_id: i.id, fee: money(i.price), fee_rule: "Charged once, on the first confirmed fill of the order you link to this thesis.", payout_account: i.creator, content_hash: i.version_hash, expires_at: new Date(Date.now() + 600_000).toISOString() };
+        quotes.set(q.quote_id, q);
+        return q;
+      }),
+    placeOrder: (body) =>
+      delay(() => {
+        const q = quotes.get(body.quote_id);
+        if (!q) throw new ApiError("quote_expired", "No such quote");
+        const i = find(q.token_id);
+        if ((i.direction === "long" ? "buy" : "sell") !== body.side) throw new ApiError("thesis_mismatch", "direction");
+        if (balance < Number(q.fee.near)) throw new ApiError("insufficient_funds", "Not enough test NEAR");
+        quotes.delete(body.quote_id);
+        const now = new Date().toISOString();
+        const o: Order = {
+          id: `ord_${++counter}`, token_id: i.id, quote_id: q.quote_id, market: i.market, side: body.side, quantity: String(body.quantity), limit_price: null,
+          filled_quantity: "0", status: "open", venue: { name: "simulated", order_id: `simord_${counter}`, status_known: true },
+          thesis_match: { token_id: i.id, content_hash: i.version_hash, market: i.market, direction: i.direction, opens_with: body.side, thesis_expires_at: i.expires_at, authorised_at: now, checked: ["market", "direction", "authorised_before_expiry"] },
+          fee: q.fee, approval: null,
+          settlement: { status: "pending", receipt_id: null, ledger: "mock", reserve: { status: "reserved", payer: MOCK_ME, payee: i.creator, reserve_tx: "mocktx", final_tx: null } },
+          trade: null, closing_orders: [], execution_events: [], created_at: now, updated_at: now,
+        };
+        orders.unshift(o);
+        return structuredClone(o);
+      }),
+    closeOrder: (orderId, body) =>
+      delay(() => {
+        const o = findOrder(orderId);
+        if (!o.trade || o.trade.status === "closed") throw new ApiError("validation", "There is no open position to close.");
+        const c: ClosingOrder = {
+          id: `cls_${++counter}`, order_id: o.id, side: o.side === "buy" ? "sell" : "buy", quantity: body.quantity ?? o.trade.open_quantity, limit_price: null,
+          filled_quantity: "0", status: "open", venue: { name: "simulated", order_id: `simord_${counter}` }, fills: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        };
+        o.closing_orders.push(c);
+        return structuredClone(c);
+      }),
+    listOrders: () => delay(() => structuredClone(orders)),
+    getOrder: (id) => delay(() => structuredClone(findOrder(id))),
+    simulate: (id, action) =>
+      delay(() => {
+        const now = new Date().toISOString();
+        const closing = orders.flatMap((o) => o.closing_orders).find((c) => c.id === id);
+        if (closing) {
+          const o = findOrder(closing.order_id);
+          closing.filled_quantity = closing.quantity; closing.status = "filled";
+          closing.fills.push({ event_id: `simevt_${++counter}`, at: now, price: "3400", quantity: closing.quantity, source: "simulated" });
+          o.trade = tradeOf(o);
+          return {};
         }
-        // Retrieval never charges. The fee is charged when a trade is reported.
-        return { borrow_id: borrowId, text: MOCK_PRIVATE_TEXT.default, repeat, charged_now: 0 };
-      }),
-    reportTrade: (borrowId, apiKey) =>
-      delay(() => {
-        const b = findBorrow(borrowId);
-        const issued = keys.get(borrowId);
-        if (!apiKey || (issued && issued !== apiKey)) throw new ApiError("key_invalid", "bad key");
-        if (b.status === "revoked") throw new ApiError("insight_revoked", "revoked");
-        if (b.status === "expired") throw new ApiError("key_expired", "expired");
-        if (b.status === "traded") return { borrow: { ...b }, charged: false };
-        if (b.status === "active") throw new ApiError("validation", "Retrieve the context before reporting a trade");
-        const ins = find(b.insight_id);
-        b.status = "traded";
-        b.charged = Math.min(ins.price, b.fee_cap);
-        b.receipt_id = `rcp_${++counter}`;
-        receipts.unshift({
-          id: b.receipt_id, date: new Date().toISOString(), insight_id: ins.id, market: ins.market, version: ins.version,
-          borrower: "demo-agent-1.testnet", fee: b.charged, status: "settled", tx_hash: `MOCKTX${counter}NOTAREALTRANSACTION`,
-        });
-        return { borrow: { ...b }, charged: true };
-      }),
-    simulateExpiry: (id) =>
-      delay(() => {
-        const b = findBorrow(id);
-        if (b.status === "active") {
-          b.status = "expired";
-          b.expires_at = new Date().toISOString();
-        }
-        return { ...b };
+        const o = findOrder(id);
+        if (action !== "fill") { o.status = action === "cancel" ? "cancelled" : "rejected"; return {}; }
+        o.filled_quantity = o.quantity; o.status = "filled"; o.updated_at = now;
+        o.execution_events.push({ id: `simevt_${++counter}`, type: "fill", quantity: o.quantity, price: "3600", source: "simulated", effect: "settled", receipt_id: `rcpt_${counter}`, received_at: now });
+        o.settlement = { ...o.settlement, status: "settled", receipt_id: `rcpt_${counter}`, reserve: { ...o.settlement.reserve, status: "settled" } };
+        const i = find(o.token_id);
+        balance -= Number(o.fee.near); earned += Number(o.fee.near);
+        receipts.unshift({ id: `rcpt_${counter}`, date: now, insight_id: i.id, market: i.market, version: i.version, order_id: o.id, fee: Number(o.fee.near), evidence: "Simulated fill (not a live venue)", tx_hash: `mocktx_${counter}`, ledger: "mock", role: i.creator === MOCK_ME ? "earned" : "paid" });
+        o.trade = tradeOf(o);
+        return {};
       }, false),
   },
   auth: {
@@ -219,42 +285,24 @@ export const MOCK_API: Api = {
       }, false),
   },
   creators: {
-    getEarnings: () => delay(earnings),
-    listReceipts: () => delay(() => [...receipts]),
-    listMyInsights: () => delay(() => [...myInsights]),
-    listExports: () =>
-      delay(() => exportsList.map((e) => ({ ...e }))),
-    simulateExport: () =>
+    profile: (account) =>
       delay(() => {
-        const n = ++counter;
-        const e: PendingExport = { id: `exp_${n}`, exported_at: new Date().toISOString(), suggested_market: "ETH/USDT", suggested_horizon: "days", message_count: 9, includes_pnl: false, version_hash: `MOCKHASH${n}FAKEFAKEFAKEFAKEFAKEFAKE`, suggested_expires_at: null };
-        exportsList.unshift(e);
-        return { ...e };
-      }, false),
-    publishExport: (input) =>
-      delay(() => {
-        const idx = exportsList.findIndex((e) => e.id === input.export_id);
-        if (idx < 0) throw new ApiError("not_found", "No such export");
-        const ex = exportsList[idx];
-        const prev = ex.previous_insight_id ? find(ex.previous_insight_id) : null;
-        const n = ++counter;
-        const detail: InsightDetail = {
-          id: `ins_${n}`, market: input.market, horizon: input.horizon, price: input.fee,
-          // With no expiry given, ConDex sets one. The backend uses the end of the day seven days out (UTC).
-          expires_at: input.expires_at ?? new Date(`${new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10)}T23:59:59Z`).toISOString(),
-          version: prev ? prev.version + 1 : 1, creator: MOCK_ME, status: "live", created_at: new Date().toISOString(),
-          version_hash: ex.version_hash, register_tx_hash: input.register_tx_hash,
-          versions: [{ version: 1, version_hash: ex.version_hash, created_at: new Date().toISOString() }],
+        const mine = insights.filter((i) => i.creator === account);
+        return {
+          publisher: MOCK_ACCOUNT(account),
+          score: { accuracy: { evaluated: 3, met: 2, accuracy_pct: 66.67, pending: 1, not_judged: 0 }, borrowers: { trades: 2, net_return_pct: 4.2, net_profit_usd: 310, max_drawdown_pct: 1.1, costs: "Before trading costs." } },
+          stats: { insights: mine.length, reads: 7, paid_orders: receipts.length, fees_paid: money(earned), payout_accounts: [account] },
+          tokens: mine.map((i) => ({
+            token_id: i.id, insight_id: i.id, version: i.version, title: i.title, market: i.market, direction: i.direction, summary: i.summary, published_at: i.created_at,
+            expires_at: i.expires_at, expired: i.status !== "live",
+            expiry: { expires_at: i.expires_at, evaluation_deadline: i.evaluation_deadline, date: i.expires_at.slice(0, 10), time: i.expires_at.slice(11, 19), time_given: true, set_by: "creator" as const, reason: null },
+            message_count: 2, creator: MOCK_ACCOUNT(account), payout_account: account, fee_per_filled_order: money(i.price),
+            author_score: { accuracy: { evaluated: 0, met: 0, accuracy_pct: null, pending: 0, not_judged: 0 }, borrowers: { trades: 0, net_return_pct: 0, net_profit_usd: 0, max_drawdown_pct: 0, costs: "" } },
+            unlock: subscriptionStatus().terms, content_hash: i.version_hash, mint: { ledger: "mock", tx: "mocktx" }, created_at: i.created_at,
+          })),
         };
-        insights.unshift(detail);
-        myInsights.unshift({ id: detail.id, market: detail.market, version: detail.version, status: "live", borrows: 0, retrievals: 0, earned: 0 });
-        exportsList.splice(idx, 1);
-        return { insight: detail };
       }),
-    updatePayoutAccount: (account) =>
-      delay(() => {
-        payoutAccount = account;
-        return earnings();
-      }),
+    receipts: () => delay(() => [...receipts]),
+    earnings: () => delay(() => ({ earned, available: balance, reserved: 0, ledger: "mock" })),
   },
 };

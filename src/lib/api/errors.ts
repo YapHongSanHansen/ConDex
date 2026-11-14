@@ -13,14 +13,16 @@ export class ApiError extends Error implements ApiErrorShape {
 
 const FRIENDLY: Record<ApiErrorCode, { title: string; next: string }> = {
   network_down: { title: "We can't reach the ConDex API.", next: "Check your connection and try again." },
-  key_expired: { title: "This key has expired.", next: "Borrow the insight again to get a new key. Nothing was charged for the expired one." },
-  key_invalid: { title: "That key doesn't match this borrow.", next: "Check you pasted the full key for this borrow." },
+  key_expired: { title: "This key has expired.", next: "Create a new key on the Connect page." },
+  key_invalid: { title: "That key was refused.", next: "Check the key, or create a new one on the Connect page." },
   missing_scope: { title: "This key can't do that.", next: "Create a key with the right access: publish, read or trade." },
   session_required: { title: "Sign in with your wallet first.", next: "Keys are managed from a wallet session, not from another key." },
+  subscription_required: { title: "Reading the full thesis needs a subscription.", next: "The abstract is free. Subscribe to read the conditions and the conversation." },
+  insufficient_funds: { title: "Not enough test NEAR in your balance.", next: "Add test NEAR to your balance and try again." },
   quote_expired: { title: "That fee quote is no longer valid.", next: "Ask for a new quote and try again." },
   insight_expired: { title: "This thesis has expired.", next: "Browse the gallery for one that is still open." },
   thesis_mismatch: { title: "That order doesn't match the thesis.", next: "Check the market and the direction: a long opens with a buy, a short with a sell." },
-  over_budget: { title: "The fee is above your approved fee cap.", next: "Raise the fee cap and borrow again." },
+  over_budget: { title: "Payment is needed first.", next: "Check your balance and try again." },
   insight_revoked: { title: "The creator revoked this insight.", next: "Browse the gallery for another insight." },
   not_found: { title: "We couldn't find that.", next: "It may have been removed. Go back to the gallery." },
   validation: { title: "Some details need fixing.", next: "Check the highlighted fields and try again." },
@@ -35,7 +37,9 @@ const FRIENDLY: Record<ApiErrorCode, { title: string; next: string }> = {
 export function friendlyError(err: unknown): { title: string; next: string; retryable: boolean } {
   const e = err instanceof ApiError ? err : new ApiError("unknown", "", true);
   const f = FRIENDLY[e.code] ?? FRIENDLY.unknown;
-  return { ...f, retryable: e.retryable };
+  // For problems the backend explains better than a generic line can (a refused order, a bad field), its own message is the next step.
+  const own = ["validation", "unknown", "key_invalid", "over_budget"].includes(e.code) && e.message && !/^HTTP \d+$/.test(e.message) && e.message !== "Unexpected error";
+  return { ...f, next: own ? e.message : f.next, retryable: e.retryable };
 }
 
 export function toApiError(err: unknown): ApiError {

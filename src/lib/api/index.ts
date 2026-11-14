@@ -1,15 +1,15 @@
 import { authApi } from "./auth";
-import { borrowsApi } from "./borrows";
 import { creatorsApi } from "./creators";
 import { insightsApi } from "./insights";
 import { keysApi } from "./keys";
+import { tradingApi } from "./trading";
 import type { Api } from "./types";
 // @mock-remove-start
 import { USE_MOCKS } from "@/lib/config";
 import { MOCK_API } from "@/mocks/api";
 // @mock-remove-end
 
-export let api: Api = { insights: insightsApi, borrows: borrowsApi, creators: creatorsApi, auth: authApi, keys: keysApi };
+export let api: Api = { insights: insightsApi, trading: tradingApi, creators: creatorsApi, auth: authApi, keys: keysApi };
 
 // @mock-remove-start
 if (USE_MOCKS) api = MOCK_API;

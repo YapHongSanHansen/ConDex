@@ -1,7 +1,7 @@
-import { latestVersions, statsFromTokens, tokenToDetail, tokenToInsight } from "./adapters";
+import { latestVersions, tokenToDetail, tokenToInsight, toStats } from "./adapters";
 import { request } from "./client";
 import type { Insight, InsightsApi, ListInsightsParams } from "./types";
-import type { TokenPreview } from "./wire";
+import type { PlatformStats, TokenPreview } from "./wire";
 
 const PAGE = 6;
 const DAY = 86_400_000;
@@ -39,5 +39,5 @@ export const insightsApi: InsightsApi = {
     const preview = await request<TokenPreview>(`/v1/tokens/${encodeURIComponent(id)}/preview`);
     return tokenToDetail(preview, await allTokens());
   },
-  getStats: async () => statsFromTokens(await allTokens()),
+  getStats: async () => toStats(await request<PlatformStats>("/v1/stats")),
 };
