@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -141,6 +141,33 @@ CREATE TABLE IF NOT EXISTS orders (
   updated_at         TEXT NOT NULL
 );
 
+-- A closing order brings a trade back to flat. No fee and no quote: its fills are the closing fills of the proof of trade.
+CREATE TABLE IF NOT EXISTS closing_orders (
+  id               TEXT PRIMARY KEY,      -- cls_...
+  order_id         TEXT NOT NULL REFERENCES orders(id),
+  borrower_id      TEXT NOT NULL REFERENCES accounts(id),
+  side             TEXT NOT NULL,         -- opposite of the opening order
+  quantity         TEXT NOT NULL,
+  limit_price      TEXT,
+  venue            TEXT NOT NULL,
+  venue_order_id   TEXT,
+  status           TEXT NOT NULL,         -- submitted | open | partially_filled | filled | cancelled | rejected | expired
+  filled_quantity  TEXT NOT NULL DEFAULT '0',
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS closing_events (
+  id           TEXT PRIMARY KEY,          -- event id supplied by the execution integration
+  closing_id   TEXT NOT NULL REFERENCES closing_orders(id),
+  type         TEXT NOT NULL,
+  quantity     TEXT,
+  price        TEXT,
+  source       TEXT NOT NULL,             -- "simulated" or "venue:<name>"
+  effect       TEXT NOT NULL,
+  received_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS execution_events (
   id           TEXT PRIMARY KEY,          -- event id supplied by the execution integration
   order_id     TEXT NOT NULL REFERENCES orders(id),
@@ -210,7 +237,7 @@ CREATE TABLE IF NOT EXISTS ledger_txs (
 
 const ALL_TABLES = [
   "ledger_txs", "ledger_reserves", "ledger_tokens", "ledger_balances",
-  "receipts", "execution_events", "orders", "quotes", "reads",
+  "closing_events", "closing_orders", "receipts", "execution_events", "orders", "quotes", "reads",
   "insight_versions", "insights", "sessions", "auth_challenges", "api_keys", "accounts",
 ];
 

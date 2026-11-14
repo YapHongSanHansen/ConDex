@@ -71,6 +71,11 @@ export const orderBody = z.object({
   authorise_fee: z.boolean(),
 });
 
+export const closeBody = z.object({
+  quantity: decimal.nullable().optional(),
+  limit_price: decimal.nullable().optional(),
+});
+
 export const executionEventBody = z.object({
   event_id: z.string().min(1).max(128),
   order_id: z.string().min(1),

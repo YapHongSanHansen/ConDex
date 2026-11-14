@@ -162,9 +162,22 @@ export function buildMcpServer(opts: McpOptions): McpServer {
 
   server.registerTool("condex_get_order", {
     title: "Get order",
-    description: "Show an order's status, fills and fee settlement.",
+    description: "Show an order's status, fills, fee settlement, and once it has filled, the trade: open or closed, and its result.",
     inputSchema: { order_id: z.string() },
   }, ({ order_id }) => call("GET", `/v1/orders/${encodeURIComponent(order_id)}`));
+
+  server.registerTool("condex_close_trade", {
+    title: "Close trade",
+    description:
+      "Close the open position of a filled order with a closing order on the opposite side. It carries no fee and is allowed " +
+      "after the thesis expired. Its confirmed fills become the closing fills of the proof of trade, and the result of the trade " +
+      "(entry, exit, profit or loss, return %) is calculated from them. Needs a key with trade scope.",
+    inputSchema: {
+      order_id: z.string().describe("The filled order that opened the trade, e.g. ord_..."),
+      quantity: z.string().optional().describe("How much to close. Defaults to everything still open."),
+      limit_price: z.string().optional().describe("Optional limit price for the closing order"),
+    },
+  }, ({ order_id, ...rest }) => call("POST", `/v1/orders/${encodeURIComponent(order_id)}/close`, rest));
 
   server.registerTool("condex_list_receipts", {
     title: "List receipts",

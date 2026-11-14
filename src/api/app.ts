@@ -23,11 +23,12 @@ import {
   getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight, thesisProof,
 } from "../services/insights.ts";
 import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
+import { closeTrade, getClosingOrder } from "../services/trades.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
 import { amount, parseNear } from "../util.ts";
 import { assertSameMachine, isSameMachine } from "./local.ts";
 import {
-  depositBody, executionEventBody, issueKeyBody, nearCliConnectBody, orderBody, parse, publishBody, quoteBody, simBody,
+  closeBody, depositBody, executionEventBody, issueKeyBody, nearCliConnectBody, orderBody, parse, publishBody, quoteBody, simBody,
   updateMeBody, verifySignInBody,
 } from "./schemas.ts";
 
@@ -314,6 +315,18 @@ export function createApp(config: Config, deps: AppDeps = {}) {
       quoteId: body.quote_id, side: body.side, quantity: body.quantity, market: body.market ?? null,
       limitPrice: body.limit_price ?? null, authoriseFee: body.authorise_fee,
     }));
+  });
+
+  // Closes the borrower's open position with a closing order on the opposite side. No fee, and it is
+  // allowed after the thesis expired.
+  app.post("/v1/orders/:orderId/close", (req, res) => {
+    const p = auth(req);
+    const body = parse(closeBody, req.body);
+    res.status(201).json(closeTrade(ctx, p, req.params.orderId!, { quantity: body.quantity ?? null, limitPrice: body.limit_price ?? null }));
+  });
+
+  app.get("/v1/closing-orders/:closingId", (req, res) => {
+    res.json(getClosingOrder(ctx, auth(req), req.params.closingId!));
   });
 
   app.get("/v1/orders", (req, res) => {

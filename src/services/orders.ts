@@ -6,6 +6,7 @@ import { amount, newId, nowIso } from "../util.ts";
 import { type Principal, getAccount, requireScope } from "./accounts.ts";
 import { type Direction, type VersionRow, getVersion, isExpired } from "./insights.ts";
 import { ingestEvent } from "./settlement.ts";
+import { listClosingOrders, tradeSummary } from "./trades.ts";
 
 export type OrderStatus = "submitted" | "open" | "partially_filled" | "filled" | "cancelled" | "rejected" | "expired";
 export type SettlementStatus = "pending" | "settled" | "released";
@@ -198,6 +199,9 @@ export function orderView(ctx: Ctx, r: OrderRow) {
         ? { status: reserve.status, payer: reserve.payer, payee: reserve.payee, reserve_tx: reserve.reserveTx, final_tx: reserve.finalTx }
         : null,
     },
+    /** Where the trade stands and, once any of it is closed, what it returned. Null until the first fill. */
+    trade: r.receipt_id ? tradeSummary(ctx, r) : null,
+    closing_orders: listClosingOrders(ctx, r.id),
     execution_events: events,
     created_at: r.created_at,
     updated_at: r.updated_at,

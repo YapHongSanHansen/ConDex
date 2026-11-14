@@ -5,6 +5,7 @@ import { formatDecimal, parseDecimal } from "../quantity.ts";
 import { amount, newId, nowIso } from "../util.ts";
 import type { Principal } from "./accounts.ts";
 import { getVersion } from "./insights.ts";
+import { CLOSING_PREFIX, ingestClosingEvent, replayClosingEvent, simulateClosing } from "./trades.ts";
 import { type OrderRow, type OrderStatus, TERMINAL_STATUSES, loadOrder, orderView } from "./orders.ts";
 
 export const EVENT_TYPES = ["accepted", "fill", "cancelled", "rejected", "expired", "status_unknown"] as const;
@@ -53,7 +54,13 @@ export function ingestEvent(ctx: Ctx, input: ExecutionEventInput) {
   }
   if (!input.eventId || input.eventId.length > 128) throw badRequest("invalid_event_id", "event_id is required (max 128 chars)");
 
+  // A closing order's events are handled by the trade-closing code.
+  if (input.orderId.startsWith(CLOSING_PREFIX)) return ingestClosingEvent(ctx, input);
+
   return transaction(ctx.db, () => {
+    if (ctx.db.prepare("SELECT 1 FROM closing_events WHERE id = ?").get(input.eventId)) {
+      throw conflict("event_id_reused", `Event ${input.eventId} was already used for a different order or type`);
+    }
     const existing = ctx.db.prepare("SELECT * FROM execution_events WHERE id = ?").get(input.eventId) as EventRow | undefined;
     if (existing) {
       if (existing.order_id !== input.orderId || existing.type !== input.type) {
@@ -85,6 +92,8 @@ export function ingestEvent(ctx: Ctx, input: ExecutionEventInput) {
 
 /** Re-sends a stored event exactly as received. Used to demonstrate that replays never pay twice. */
 export function replayEvent(ctx: Ctx, eventId: string) {
+  const closing = replayClosingEvent(ctx, eventId);
+  if (closing) return closing;
   const row = ctx.db.prepare("SELECT * FROM execution_events WHERE id = ?").get(eventId) as EventRow | undefined;
   if (!row) throw notFound(`Execution event ${eventId}`);
   return ingestEvent(ctx, {
@@ -94,6 +103,7 @@ export function replayEvent(ctx: Ctx, eventId: string) {
 
 /** Test controls for the simulated venue. Each call produces a fresh event labelled "simulated". */
 export function simulate(ctx: Ctx, orderId: string, type: EventType, opts: { quantity?: string; price?: string } = {}) {
+  if (orderId.startsWith(CLOSING_PREFIX)) return simulateClosing(ctx, orderId, type, opts);
   const order = loadOrder(ctx, orderId);
   if (order.venue !== "simulated") throw forbidden("not_simulated", "Only orders on the simulated venue can be driven by /v1/sim");
   let quantity = opts.quantity;
