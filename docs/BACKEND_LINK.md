@@ -40,16 +40,23 @@ Backend branch `backend` (latest, with `GET /v1/stats`). Every page below was ru
 
 ### Things that behave differently from what you might expect
 
-- **No simulated fills from the website.** The backend's `/v1/sim/*` routes refuse any request that comes through a proxy, on purpose. A real fill comes from the execution route (`POST /v1/execution/events`). In a demo, drive fills from the backend test console at `http://localhost:8787/test` or with `curl` directly. The website shows its "Simulate a fill" button only in mock mode.
-- **The balance is a mock-ledger balance.** "Add test NEAR" calls `POST /v1/ledger/deposit`, which exists only on the mock ledger. On the NEAR ledger the account deposits to the contract itself and the order waits as `awaiting_approval` until the wallet signs `reserve_fee`; the panel shows that state but does not sign it yet.
+- **Fills come from the execution route.** The backend's `/v1/sim/*` routes refuse any request that comes through a proxy or from another website, on purpose. So the website's "Simulate a fill" buttons exist only in mock mode. With the real backend on your own machine, the order panel and the order drawer link to the backend's test console (`/test`), which can fill, cancel or reject an order. That link is shown only when `NEXT_PUBLIC_DEV_WALLET` is set.
+- **Two ledgers.** `GET /health` says which one the backend runs. On the **mock ledger** the backend moves test NEAR itself (Add test NEAR, Subscribe). On the **NEAR ledger** (`CONDEX_LEDGER=near`) the trader signs from their wallet, and the page does that:
+  - **Add funds:** `deposit()` on the contract with the amount attached.
+  - **Subscribe:** `subscribe()` with the price attached. The page then waits until the backend reads the subscription from the contract.
+  - **Order:** the order is first `awaiting_approval`. The page signs `reserve_fee` with exactly the arguments the backend put in `approval` (no deposit: the fee comes from the balance), then calls `POST /v1/orders/:id/confirm-approval`, retrying while the transaction becomes final. If the wallet is closed, an "Approve the fee in your wallet" button asks again, in the panel and in the order drawer.
 - **Receipts have no market.** They are joined with the token list to name the thesis.
 
-## Still open
+### How the NEAR path was checked
 
-1. **NEAR ledger ordering.** With `CONDEX_LEDGER=near` an order is `awaiting_approval`. The page needs a wallet call to `reserve_fee`, then `POST /v1/orders/:id/confirm-approval`. Not built.
-2. **CORS.** The backend sends no CORS headers. The dev proxy hides that. For production, put the site and the API behind one origin, or add an allow-list on the backend.
-3. **Auth recipient.** The backend signs challenges for `CONDEX_AUTH_RECIPIENT` (the site's domain). It must match the deployed site. Redirect wallets also need `callback_url` and the backend's `allowedOrigins`. The sign-in code does not send `callback_url` yet.
-4. **MCP package.** The Connect page shows `npx -y condex-mcp` as a proposal. The backend README runs `node <path>/src/mcp/server.ts`. The environment variables are the real ones: `CONDEX_API_URL`, `CONDEX_API_KEY`.
+With a stand-in wallet that records each transaction it is asked to sign, and the backend's `/health`, subscription, balance and order answers replaced by the shapes a NEAR-ledger backend sends, a browser run checked that the right contract, method, arguments and attached deposit were signed for subscribe, deposit and `reserve_fee`, and that `confirm-approval` was then called. It has **not** been run against the real testnet contract with a real wallet: that needs a funded testnet account and a backend started with the operator keys.
+
+## Going to production
+
+1. **One origin or CORS.** Either serve the site and the API under one origin (the site forwards `/backend/*`, nothing else to do), or call the API at its own URL (`NEXT_PUBLIC_API_BASE_URL=https://api.example`) and start the backend with `CONDEX_CORS_ORIGINS=https://your-site`. Any other origin gets no CORS header.
+2. **Sign-in recipient.** Start the backend with `CONDEX_AUTH_RECIPIENT=<the site's host>`. The wallet signs for that name. In a production build the page refuses to sign in if the name is not the site's own, and says what to set.
+3. **`callback_url`.** It is only for redirect wallets. The HOT wallet connector this site uses opens its wallet in a popup or iframe and never redirects, so the site does not send one. If a redirect wallet is added later, send the exact `callbackUrl` and list the site in `CONDEX_ALLOWED_ORIGINS`.
+4. **MCP command.** The Keys page shows the backend's real two lines (`claude mcp remove condex`, then `claude mcp add condex … -- node "<path>/src/mcp/server.ts"`). The path is the creator's own, so they edit it on the page and it is kept in their browser. There is no `condex-mcp` package. If one is published later, change `mcpCommand` in `creator-setup.tsx`.
 
 ## Errors
 
