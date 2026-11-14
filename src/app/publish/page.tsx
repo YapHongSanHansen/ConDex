@@ -7,7 +7,7 @@ export const metadata = { title: "Publish · ConDex" };
 export default function PublishPage() {
   return (
     <div className="container-wide space-y-8 pb-10">
-      <PageHeader title="Publish">Connect Claude Code once, describe your thesis, and Claude publishes it for you.</PageHeader>
+      <PageHeader title="Publish">Connect Claude Code once, then just tell it to publish.</PageHeader>
       <Suspense fallback={null}><PublishFlow /></Suspense>
     </div>
   );
