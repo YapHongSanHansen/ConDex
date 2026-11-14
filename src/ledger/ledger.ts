@@ -25,6 +25,12 @@ export interface Ledger {
     amountYocto: bigint;
   }): { tx: string };
 
+  /**
+   * Charges a subscription to ConDex: moves `amount` from the payer's available balance to the treasury.
+   * Calling it again with the same subscription id returns the original tx and charges nothing.
+   */
+  chargeSubscription(input: { subscriptionId: string; payer: string; payee: string; amountYocto: bigint }): { tx: string };
+
   /** Pays the reserved fee to the payee. Calling it again for the same order returns the original tx. */
   settleFee(orderId: string, receiptId: string): { tx: string; alreadyFinal: boolean };
 
@@ -33,7 +39,23 @@ export interface Ledger {
 
   getReserve(orderId: string): LedgerReserve | undefined;
 
+  /**
+   * Adds one closing fill to the proof of trade of an order that has one. Calling it again with the same
+   * event id records nothing new.
+   */
+  recordClose(orderId: string, close: CloseInput): { tx: string };
+
   listTxs(limit: number): LedgerTx[];
+}
+
+export interface CloseInput {
+  eventId: string;
+  quantity: string;
+  price: string;
+  /** ISO 8601. */
+  closedAt: string;
+  /** "simulated" or "venue:<name>". */
+  source: string;
 }
 
 /** What the token record of one thesis version holds. Only the fingerprint of the content goes on chain. */

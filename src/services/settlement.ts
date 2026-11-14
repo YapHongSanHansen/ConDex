@@ -71,6 +71,9 @@ export function ingestEvent(ctx: Ctx, input: ExecutionEventInput) {
     }
 
     const order = loadOrder(ctx, input.orderId);
+    if (order.status === "awaiting_approval") {
+      throw conflict("not_submitted", `Order ${order.id} is waiting for the trader's approval on NEAR and was never submitted`);
+    }
     const { effect, receiptId, quantity } = apply(ctx, order, input);
     const row: EventRow = {
       id: input.eventId,
@@ -211,6 +214,10 @@ function apply(ctx: Ctx, order: OrderRow, ev: ExecutionEventInput): { effect: Ef
       if (qty > open) {
         throw badRequest("overclose", `Close of ${formatDecimal(qty)} exceeds the open position ${formatDecimal(open)}`);
       }
+      ctx.ledger.recordClose(order.id, {
+        eventId: ev.eventId, quantity: formatDecimal(qty), price: formatDecimal(parseDecimal(ev.price, "price")),
+        closedAt: nowIso(), source: ev.source,
+      });
       return { effect: "position_closed", receiptId: order.receipt_id, quantity: formatDecimal(qty) };
     }
   }

@@ -1,7 +1,7 @@
 import { type Db, transaction } from "../db.ts";
 import { conflict, paymentRequired } from "../errors.ts";
 import { nowIso, sha256Hex } from "../util.ts";
-import type { Ledger, LedgerBalance, LedgerReserve, LedgerTx, MintInput } from "./ledger.ts";
+import type { CloseInput, Ledger, LedgerBalance, LedgerReserve, LedgerTx, MintInput } from "./ledger.ts";
 
 interface BalanceRow { account: string; available_yocto: string; reserved_yocto: string; earned_yocto: string }
 interface ReserveRow {
@@ -89,6 +89,30 @@ export class MockLedger implements Ledger {
     });
   }
 
+  chargeSubscription(input: { subscriptionId: string; payer: string; payee: string; amountYocto: bigint }) {
+    return transaction(this.db, () => {
+      const existing = this.db.prepare("SELECT tx FROM ledger_subscriptions WHERE subscription_id = ?").get(input.subscriptionId) as
+        | { tx: string } | undefined;
+      if (existing) return { tx: existing.tx };
+      const payer = this.balanceOf(input.payer);
+      if (payer.availableYocto < input.amountYocto) {
+        throw paymentRequired(
+          "insufficient_balance",
+          `${input.payer} has ${payer.availableYocto} yocto available but the subscription needs ${input.amountYocto}`,
+        );
+      }
+      this.writeBalance({ ...payer, availableYocto: payer.availableYocto - input.amountYocto });
+      const payee = this.balanceOf(input.payee);
+      this.writeBalance({ ...payee, earnedYocto: payee.earnedYocto + input.amountYocto });
+      const tx = this.recordTx("charge_subscription", {
+        subscription_id: input.subscriptionId, payer: input.payer, payee: input.payee, amount_yocto: input.amountYocto.toString(),
+      });
+      this.db.prepare("INSERT INTO ledger_subscriptions (subscription_id, payer, payee, amount_yocto, tx) VALUES (?, ?, ?, ?, ?)")
+        .run(input.subscriptionId, input.payer, input.payee, input.amountYocto.toString(), tx);
+      return { tx };
+    });
+  }
+
   settleFee(orderId: string, receiptId: string) {
     return this.finalise(orderId, "settled", (reserve) => {
       const payer = this.balanceOf(reserve.payer);
@@ -121,6 +145,15 @@ export class MockLedger implements Ledger {
     return {
       orderId: row.order_id, tokenId: row.token_id, payer: row.payer, payee: row.payee,
       amountYocto: BigInt(row.amount_yocto), status: row.status, reserveTx: row.reserve_tx, finalTx: row.final_tx,
+    };
+  }
+
+  recordClose(orderId: string, close: CloseInput) {
+    return {
+      tx: this.recordTx("record_close", {
+        order_id: orderId, event_id: close.eventId, quantity: close.quantity, price: close.price,
+        closed_at: close.closedAt, source: close.source,
+      }),
     };
   }
 

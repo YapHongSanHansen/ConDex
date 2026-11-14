@@ -101,13 +101,29 @@ export async function connectWallet(api: Api, accountId: string, opts: { display
   return { verify, session: verify.body?.session?.token as string, challenge, publicKey, privateKey, signature };
 }
 
-/** Alice (creator) with a publish key, Bob (borrower) with separate read and trade keys and 1 test NEAR. */
+/**
+ * Pays one subscription period, after depositing exactly its fee, so the account's balance is the same
+ * afterwards. Reading the full thesis and trading need it.
+ */
+export async function subscribe(api: Api, key: string) {
+  const status = await api("GET", "/v1/subscription", { key });
+  await api("POST", "/v1/ledger/deposit", { key, body: { amount_near: status.body.terms.fee.near } });
+  const paid = await api("POST", "/v1/subscription", { key });
+  if (paid.status !== 201) throw new Error(`subscribe failed: ${JSON.stringify(paid.body)}`);
+  return paid;
+}
+
+/**
+ * Alice (creator) with a publish key, Bob (borrower) with separate read and trade keys, an active
+ * subscription and 1 test NEAR.
+ */
 export async function setupAliceAndBob(api: Api) {
   const aliceSession = (await connectWallet(api, "alice.testnet", { displayName: "Alice" })).session;
   const bobSession = (await connectWallet(api, "bob.testnet", { displayName: "Bob" })).session;
   const alicePublish = (await api("POST", "/v1/keys", { key: aliceSession, body: { scopes: ["publish"], label: "alice agent" } })).body.secret as string;
   const bobRead = (await api("POST", "/v1/keys", { key: bobSession, body: { scopes: ["read"], label: "bob research" } })).body.secret as string;
   const bobTrade = (await api("POST", "/v1/keys", { key: bobSession, body: { scopes: ["trade"], label: "bob trading" } })).body.secret as string;
+  await subscribe(api, bobSession);
   await api("POST", "/v1/ledger/deposit", { key: bobSession, body: { amount_near: "1" } });
   const published = await api("POST", "/v1/insights", { key: alicePublish, body: ETH_THESIS });
   return { aliceSession, bobSession, alicePublish, bobRead, bobTrade, tokenId: published.body.token_id as string, published };

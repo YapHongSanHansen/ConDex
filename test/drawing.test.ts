@@ -139,28 +139,45 @@ describe("drawing: Trader A publishes, ConDex proves, an AI agent reads", () => 
     assert.equal((await api("GET", `/v1/tokens/${s.tokenId}/proof`)).body.proof_of_thesis.preserved, true);
   });
 
-  test("AI agent calls the reading API; anyone can see the author's record without the insight", async () => {
+  test("AI agent calls the reading API; anyone can read the abstract and the author's accuracy, not the insight", async () => {
     const bob = await connectWallet(api, "bob-agent.testnet");
     s.bobSession = bob.session;
     s.bobRead = (await api("POST", "/v1/keys", { key: s.bobSession, body: { scopes: ["read"] } })).body.secret;
     s.bobTrade = (await api("POST", "/v1/keys", { key: s.bobSession, body: { scopes: ["trade"] } })).body.secret;
-    await api("POST", "/v1/ledger/deposit", { key: s.bobSession, body: { amount_near: "1" } });
+    await api("POST", "/v1/ledger/deposit", { key: s.bobSession, body: { amount_near: "2" } });
 
-    // Public, no key: the preview and publisher page show no entry, invalidation or conversation.
+    // Public, no key: the abstract and publisher page show the author's accuracy, and no entry, invalidation,
+    // levels or conversation.
     const preview = (await api("GET", `/v1/tokens/${s.tokenId}/preview`)).body;
     const profile = (await api("GET", "/v1/publishers/trader-a.testnet")).body;
+    assert.equal(preview.title, BULLISH.title);
+    assert.deepEqual(preview.author_score, profile.score);
+    assert.ok("accuracy" in preview.author_score);
     for (const text of [JSON.stringify(preview), JSON.stringify(profile)]) {
       assert.ok(!text.includes(BULLISH.entry) && !text.includes(BULLISH.invalidation) && !text.includes("swept yesterday"));
+      assert.ok(!text.includes("entry_price"));
     }
     assert.equal((await api("GET", `/v1/tokens/${s.tokenId}`)).status, 401);
   });
 
-  test("the full insight is behind a subscription fee to ConDex", { todo: "reading the full insight is free with any read key; there is no subscription" }, async () => {
-    const read = await api("GET", `/v1/tokens/${s.tokenId}`, { key: s.bobRead });
-    assert.equal(read.status, 402);
+  test("the full insight is behind a subscription fee to ConDex", async () => {
+    const locked = await api("GET", `/v1/tokens/${s.tokenId}`, { key: s.bobRead });
+    assert.equal(locked.status, 402);
+    assert.equal(locked.body.error.code, "subscription_required");
+    assert.ok(!JSON.stringify(locked.body).includes(BULLISH.entry));
+    // A read key cannot spend money, so it cannot subscribe.
+    assert.equal((await api("POST", "/v1/subscription", { key: s.bobRead })).status, 403);
+
+    const paid = await api("POST", "/v1/subscription", { key: s.bobSession });
+    assert.equal(paid.status, 201);
+    assert.equal(paid.body.active, true);
+    assert.equal(paid.body.payment.paid.near, "1");
+    // The subscription goes to ConDex, not to the creator.
+    assert.equal((await api("GET", "/v1/ledger/balances/condex-treasury.testnet")).body.earned.near, "1");
+    assert.equal((await api("GET", "/v1/ledger/balances/trader-a.testnet")).body.earned.near, "0");
   });
 
-  test("the user decides: reading costs nothing, and walking away costs nothing", async () => {
+  test("the user decides: with a subscription, reading costs nothing more, and walking away costs nothing", async () => {
     const before = (await api("GET", "/v1/ledger/balances/bob-agent.testnet")).body;
     for (let i = 0; i < 3; i++) {
       const read = await api("GET", `/v1/tokens/${s.tokenId}`, { key: s.bobRead });
@@ -248,7 +265,7 @@ describe("drawing: Trader A publishes, ConDex proves, an AI agent reads", () => 
     assert.deepEqual(accuracy, { evaluated: 2, met: 2, accuracy_pct: 100, pending: 0, not_judged: 0 });
   });
 
-  test("after the expiry, reading stays free but no new trade can be linked", async () => {
+  test("after the expiry, subscribers can still read but no new trade can be linked", async () => {
     assert.equal((await api("GET", `/v1/tokens/${s.tokenId}`, { key: s.bobRead })).status, 200);
     const quote = await api("POST", "/v1/quotes", { key: s.bobTrade, body: { token_id: s.tokenId } });
     assert.equal(quote.status, 409);

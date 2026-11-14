@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 11;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS orders (
   fee_yocto          TEXT NOT NULL,
   venue              TEXT NOT NULL,
   venue_order_id     TEXT,
-  status             TEXT NOT NULL,       -- submitted | open | partially_filled | filled | cancelled | rejected | expired
+  status             TEXT NOT NULL,       -- awaiting_approval | submitted | open | partially_filled | filled | cancelled | rejected | expired
   venue_status_known INTEGER NOT NULL DEFAULT 1,
   filled_quantity    TEXT NOT NULL DEFAULT '0',
   settlement_status  TEXT NOT NULL,       -- pending | settled | released
@@ -198,6 +198,19 @@ CREATE TABLE IF NOT EXISTS receipts (
   created_at           TEXT NOT NULL
 );
 
+-- Subscriptions ------------------------------------------------------------
+-- One period per payment. A renewal starts when the current period ends.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id            TEXT PRIMARY KEY,
+  account_id    TEXT NOT NULL REFERENCES accounts(id),
+  starts_at     TEXT NOT NULL,
+  ends_at       TEXT NOT NULL,
+  amount_yocto  TEXT NOT NULL,
+  tx            TEXT NOT NULL,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS subscriptions_by_account ON subscriptions (account_id, ends_at);
+
 -- Mock NEAR ledger -------------------------------------------------------
 -- Stands in for the NEAR contract until it is deployed. Keyed by NEAR account id.
 CREATE TABLE IF NOT EXISTS ledger_balances (
@@ -230,12 +243,45 @@ CREATE TABLE IF NOT EXISTS ledger_reserves (
   final_tx      TEXT
 );
 
+CREATE TABLE IF NOT EXISTS ledger_subscriptions (
+  subscription_id  TEXT PRIMARY KEY,
+  payer            TEXT NOT NULL,
+  payee            TEXT NOT NULL,
+  amount_yocto     TEXT NOT NULL,
+  tx               TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ledger_txs (
   id          TEXT PRIMARY KEY,
   seq         INTEGER NOT NULL,
   method      TEXT NOT NULL,
   args        TEXT NOT NULL,
   created_at  TEXT NOT NULL
+);
+
+-- NEAR contract (CONDEX_LEDGER=near) -----------------------------------
+-- Calls ConDex signs, queued in the same transaction as the change they record and sent in order.
+CREATE TABLE IF NOT EXISTS chain_outbox (
+  seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+  id          TEXT NOT NULL UNIQUE,     -- "pending:<id>" stands in for the tx hash until it is sent
+  signer      TEXT NOT NULL,            -- operator | reporter
+  method      TEXT NOT NULL,
+  args        TEXT,                     -- JSON; NULL when built at send time (settle_fee's proof)
+  ref         TEXT,                     -- what the call is about: a token, order or receipt id
+  status      TEXT NOT NULL,            -- queued | sent | failed
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  next_try_at TEXT NOT NULL,
+  tx_hash     TEXT,
+  error       TEXT,
+  created_at  TEXT NOT NULL,
+  sent_at     TEXT
+);
+
+-- What the contract's subscription_of said, kept briefly so reads do not ask NEAR every time.
+CREATE TABLE IF NOT EXISTS chain_subscriptions (
+  account          TEXT PRIMARY KEY,    -- NEAR account id
+  subscribed_until TEXT,                -- ISO 8601; NULL when never subscribed
+  checked_at       TEXT NOT NULL
 );
 
 -- Market data and thesis evaluation ------------------------------------
@@ -266,9 +312,10 @@ CREATE TABLE IF NOT EXISTS thesis_evaluations (
 `;
 
 const ALL_TABLES = [
+  "chain_subscriptions", "chain_outbox",
   "thesis_evaluations", "market_prices",
-  "ledger_txs", "ledger_reserves", "ledger_tokens", "ledger_balances",
-  "closing_events", "closing_orders", "receipts", "execution_events", "orders", "quotes", "reads",
+  "ledger_txs", "ledger_subscriptions", "ledger_reserves", "ledger_tokens", "ledger_balances",
+  "subscriptions", "closing_events", "closing_orders", "receipts", "execution_events", "orders", "quotes", "reads",
   "insight_versions", "insights", "sessions", "auth_challenges", "api_keys", "accounts",
 ];
 

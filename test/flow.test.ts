@@ -22,7 +22,7 @@ describe("README demo checklist", () => {
     assert.equal(p.status, 201);
     assert.match(s.tokenId, /^ins_.+-v1$/);
     assert.equal(p.body.fee_per_filled_order.near, "0.1");
-    assert.equal(p.body.read_fee.near, "0");
+    assert.equal(p.body.unlock.fee.near, "1");
     assert.equal(p.body.mint.ledger, "mock");
     assert.match(p.body.content_hash, /^[0-9a-f]{64}$/);
     assert.equal(p.body.payout_account, "alice.testnet");
@@ -31,12 +31,13 @@ describe("README demo checklist", () => {
     const preview = await api("GET", `/v1/tokens/${s.tokenId}/preview`);
     assert.equal(preview.body.message_count, 2);
     assert.equal(preview.body.messages, undefined);
+    assert.equal(preview.body.author_score.borrowers.trades, 0);
 
     const txs = (await api("GET", "/v1/ledger/txs")).body.txs;
     assert.ok(txs.some((t: { method: string; args: { token_id?: string } }) => t.method === "mint_insight_token" && t.args.token_id === s.tokenId));
   });
 
-  test("2. read twice with a borrower credential and pay nothing", async () => {
+  test("2. with a subscription, read twice with a borrower credential and pay nothing more", async () => {
     const before = await balance("bob.testnet");
     const r1 = await api("GET", `/v1/tokens/${s.tokenId}`, { key: s.bobRead });
     const r2 = await api("GET", `/v1/tokens/${s.tokenId}`, { key: s.bobRead });

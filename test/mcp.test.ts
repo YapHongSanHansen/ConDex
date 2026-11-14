@@ -29,13 +29,14 @@ test("a creator's agent publishes and a borrower's agent reads and trades over M
   const bobSession = (await connectWallet(api, "bob-mcp.testnet")).session;
   const alicePublish = (await api("POST", "/v1/keys", { key: aliceSession, body: { scopes: ["publish"] } })).body.secret;
   const bobAgentKey = (await api("POST", "/v1/keys", { key: bobSession, body: { scopes: ["read", "trade"] } })).body.secret;
-  await api("POST", "/v1/ledger/deposit", { key: bobSession, body: { amount_near: "1" } });
+  await api("POST", "/v1/ledger/deposit", { key: bobSession, body: { amount_near: "2" } });
 
   const aliceAgent = await connect(alicePublish);
   const tools = (await aliceAgent.listTools()).tools.map((t) => t.name).sort();
   assert.deepEqual(tools, [
-    "condex_close_trade", "condex_get_order", "condex_get_proof", "condex_list_insights", "condex_list_receipts", "condex_place_order", "condex_publish_insight",
-    "condex_publish_version", "condex_quote_fee", "condex_read_insight", "condex_whoami",
+    "condex_close_trade", "condex_confirm_approval", "condex_get_order", "condex_get_proof", "condex_get_publisher", "condex_list_insights",
+    "condex_list_receipts", "condex_place_order", "condex_publish_insight", "condex_publish_version", "condex_quote_fee",
+    "condex_read_insight", "condex_subscribe", "condex_subscription_status", "condex_whoami",
   ]);
 
   const published = json(await aliceAgent.callTool({
@@ -78,7 +79,19 @@ test("a creator's agent publishes and a borrower's agent reads and trades over M
 
   const bobAgent = await connect(bobAgentKey);
   const list = json(await bobAgent.callTool({ name: "condex_list_insights", arguments: { market: "ETH-USD" } }));
-  assert.ok(list.body.tokens.some((t: { token_id: string }) => t.token_id === tokenId));
+  const abstract = list.body.tokens.find((t: { token_id: string }) => t.token_id === tokenId);
+  assert.equal(abstract.author_score.borrowers.trades, 0);
+  assert.equal(abstract.conditions, undefined);
+  const publisher = json(await bobAgent.callTool({ name: "condex_get_publisher", arguments: { near_account_id: "alice-mcp.testnet" } }));
+  assert.deepEqual(publisher.body.score, abstract.author_score);
+
+  // The full thesis needs a subscription, which the agent pays for from Bob's balance.
+  const locked = json(await bobAgent.callTool({ name: "condex_read_insight", arguments: { token_id: tokenId } }));
+  assert.equal(locked.isError, true);
+  assert.match(locked.body, /402.*subscription_required/);
+  assert.equal(json(await bobAgent.callTool({ name: "condex_subscription_status", arguments: {} })).body.active, false);
+  const subscribed = json(await bobAgent.callTool({ name: "condex_subscribe", arguments: {} }));
+  assert.equal(subscribed.body.active, true);
 
   const read = json(await bobAgent.callTool({ name: "condex_read_insight", arguments: { token_id: tokenId } }));
   assert.equal(read.body.charge.near, "0");
@@ -147,7 +160,7 @@ test("an MCP server saying hello makes its key show as connected, with its tools
   assert.ok(after.mcp.tools.includes("condex_publish_insight"));
 
   const tools = (await api("GET", "/v1/mcp/tools")).body.tools.map((t: { name: string }) => t.name);
-  assert.equal(tools.length, 11);
+  assert.equal(tools.length, 15);
   assert.ok(tools.includes("condex_place_order"));
 
   await sayHello({ apiUrl: srv.base, apiKey: "cdx_not-a-real-key" }); // must not throw

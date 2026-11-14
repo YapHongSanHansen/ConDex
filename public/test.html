@@ -512,11 +512,13 @@ async function ensureSetup() {
       // Every thesis expires, and an expired one takes no new orders, so the demos then get a fresh one.
       if (checks.at(-1).body.expired) await ACTION_BY_ID.publish.run();
       await topUpBob();
+      await ACTION_BY_ID.subscribe.run();
+      await topUpBob();
       return;
     }
     for (const [k] of STATE_FIELDS) if (k !== "execSecret") S[k] = "";
   }
-  for (const id of ["connectAlice", "connectBob", "aliceKeys", "bobKeys", "deposit", "publish"]) await ACTION_BY_ID[id].run();
+  for (const id of ["connectAlice", "connectBob", "aliceKeys", "bobKeys", "deposit", "subscribe", "publish"]) await ACTION_BY_ID[id].run();
 }
 
 /** Demos pay fees from Bob's test balance; keep at least 1 NEAR there so they can be run again and again. */
@@ -546,7 +548,7 @@ const SECTIONS = [
     fields: `
       <label>Alice NEAR account<input id="f-alice-acct" value="alice.testnet"></label>
       <label>Bob NEAR account<input id="f-bob-acct" value="bob.testnet"></label>
-      <label>Deposit for Bob (NEAR)<input id="f-deposit" value="1"></label>`,
+      <label>Deposit for Bob (NEAR)<input id="f-deposit" value="2"></label>`,
     actions: [
       { id: "health", label: "Health check", run: async () => {
         const b = expectStatus(await call("GET", "/health"), 200);
@@ -617,6 +619,17 @@ const SECTIONS = [
         const b = expectStatus(await call("POST", "/v1/ledger/deposit", { key: need("bobSession", "Connect Bob's wallet"), body: { amount_near: val("f-deposit") } }), 201);
         return `Bob available ${b.available.near} NEAR`;
       } },
+      { id: "subscribe", label: "Subscribe Bob (unlocks every full thesis)", run: async () => {
+        const owner = need("bobSession", "Connect Bob's wallet");
+        const status = expectStatus(await call("GET", "/v1/subscription", { key: owner }), 200);
+        if (status.active) return `already active until ${utcText(status.subscribed_until)}`;
+        const b = expectStatus(await call("POST", "/v1/subscription", { key: owner }), 201);
+        expect(b.active && b.payment.paid.near === status.terms.fee.near, "the subscription should be active and cost its fee");
+        return `paid ${b.payment.paid.near} NEAR to ${status.terms.paid_to} (ConDex), active until ${utcText(b.subscribed_until)}`;
+      } },
+      { id: "subscribeWithReadKey", label: "Subscribe with Bob's read key (expect 403)", run: async () => {
+        return expectStatus(await call("POST", "/v1/subscription", { key: need("bobRead", "Issue Bob's keys") }), 403).error.code;
+      } },
     ],
   },
   {
@@ -643,7 +656,7 @@ const SECTIONS = [
         const body = publishBody();
         const b = await publishAs(body, 201);
         adoptToken(b);
-        expect(b.read_fee.yocto === "0", "reading must be free");
+        expect(b.author_score && b.unlock, "the abstract should show the author's accuracy and how to unlock the thesis");
         const c = b.conditions;
         expect(c.market === body.market && c.direction === body.direction && c.entry === body.entry && c.invalidation === body.invalidation, "the conditions were not recorded as sent");
         expect(body.expiry_date ? b.expiry.set_by === "creator" : b.expiry.set_by !== "creator", "wrong record of who set the expiry");
@@ -697,21 +710,23 @@ const SECTIONS = [
   },
   {
     title: "3. Visitor without a wallet",
-    hint: "No credentials at all. A visitor can see publisher details, insight previews and the public proof of each thesis; everything else asks them to connect a wallet.",
+    hint: "No credentials at all. A visitor can read the abstract of each thesis with the author's accuracy and track record, publisher details and the public proof; everything else asks them to connect a wallet.",
     actions: [
       { id: "visitorPublisher", label: "View Alice's publisher page", run: async () => {
         const b = expectStatus(await call("GET", `/v1/publishers/${val("f-alice-acct")}`), 200);
         expect(b.tokens.every((t) => t.messages === undefined), "publisher page must not include messages");
         return `${b.publisher.display_name}: ${b.stats.insights} insights, ${b.stats.reads} reads, ${b.stats.paid_orders} paid orders, ${b.stats.fees_paid.near} NEAR in fees`;
       } },
-      { id: "listTokens", label: "List insight previews", run: async () => {
+      { id: "listTokens", label: "List abstracts", run: async () => {
         const b = expectStatus(await call("GET", "/v1/tokens"), 200);
         return `${b.tokens.length} tokens`;
       } },
-      { id: "preview", label: "Preview one token", run: async () => {
+      { id: "preview", label: "Read one abstract", run: async () => {
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}/preview`), 200);
-        expect(b.messages === undefined, "preview must not include the messages");
-        return `${b.message_count} messages hidden, fee ${b.fee_per_filled_order.near} NEAR per filled order`;
+        expect(b.messages === undefined && b.conditions === undefined, "the abstract must not include the messages or conditions");
+        const a = b.author_score.accuracy;
+        return `${b.message_count} messages and the conditions locked, fee ${b.fee_per_filled_order.near} NEAR per filled order; ` +
+          `author accuracy ${a.accuracy_pct ?? "n/a"}% (${a.met}/${a.evaluated}); unlock: ${b.unlock.fee.near} NEAR / ${b.unlock.period_days} days`;
       } },
       { id: "proofOfThesis", label: "Proof of thesis (public)", run: async () => {
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}/proof`), 200);
@@ -734,15 +749,22 @@ const SECTIONS = [
   },
   {
     title: "4. Read (wallet connected)",
-    hint: "The full conversation needs a read-scoped key or a wallet session, and is always free.",
+    hint: "The full thesis (conditions and conversation) needs a read-scoped key or a wallet session, and an active ConDex subscription. Repeated reads cost nothing more.",
     actions: [
+      { id: "readLocked", label: "Read without a subscription (expect 402)", run: async () => {
+        // Carol connects but never subscribes.
+        const { b } = await connectDevWallet("carol.testnet", "Carol");
+        const r = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: b.session.token }), 402);
+        expect(r.error.code === "subscription_required" && r.error.details.fee, "the 402 should name the subscription and its terms");
+        return r.error.message;
+      } },
       { id: "read", label: "Read insight (Bob)", run: async () => {
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
         expect(b.charge.yocto === "0", "reading must cost nothing");
         expect(b.integrity.matches === true, "the stored thesis should still match its fingerprint");
         return `${b.messages.length} messages, charged ${b.charge.near} NEAR, stored content matches the fingerprint`;
       } },
-      { id: "readAgain", label: "Read again (still free)", run: async () => {
+      { id: "readAgain", label: "Read again (no extra charge)", run: async () => {
         const b = expectStatus(await call("GET", `/v1/tokens/${need("tokenId", "Publish an insight")}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
         expect(b.your_reads.total_charged.yocto === "0", "repeated reads must cost nothing");
         return `${b.your_reads.count} reads, total charged ${b.your_reads.total_charged.near} NEAR`;
@@ -817,8 +839,8 @@ const SECTIONS = [
         const requote = expectStatus(await call("POST", "/v1/quotes", { key: S.bobTrade, body: { token_id: thesis.token_id } }), 409);
         expect(requote.error.code === "insight_expired", "a new quote should be refused too");
         const read = expectStatus(await call("GET", `/v1/tokens/${thesis.token_id}`, { key: need("bobRead", "Issue Bob's keys") }), 200);
-        expect(read.expired === true && read.charge.yocto === "0", "an expired thesis stays readable for free");
-        return `expired at ${utcText(thesis.expires_at)}: the order and a new quote were refused, and it is still free to read`;
+        expect(read.expired === true && read.charge.yocto === "0", "an expired thesis stays readable to subscribers");
+        return `expired at ${utcText(thesis.expires_at)}: the order and a new quote were refused, and subscribers can still read it`;
       } },
       { id: "placeWithoutAuth", label: "Place order without authorising fee (expect 400)", run: async () => {
         await newQuote();
@@ -975,7 +997,7 @@ const SECTIONS = [
         expect(txs.some((t) => t.method === "mint_insight_token" && t.args.token_id === b.token_id), "mint tx not found on ledger");
         return `minted ${b.token_id} with hash ${b.content_hash.slice(0, 12)}…`;
       } },
-      { id: "demo2", label: "② Read twice, zero charges", run: async () => {
+      { id: "demo2", label: "② Subscribed: read twice, no extra charge", run: async () => {
         await ensureSetup();
         const before = (await refreshBalances()).bob;
         for (let i = 0; i < 2; i++) {
@@ -1440,7 +1462,7 @@ function renderPublished(tokens) {
     if (WALLET && t.creator.near_account_id === WALLET.account) { const m = document.createElement("span"); m.className = "tag mine"; m.textContent = "yours"; title.append(m); }
     if (t.expired) { const e = document.createElement("span"); e.className = "tag"; e.textContent = "expired"; title.append(e); }
     const meta = document.createElement("div"); meta.className = "meta";
-    meta.textContent = [t.market, t.direction, "v" + t.version, t.fee_per_filled_order.near + " NEAR per filled order", "free to read", t.message_count + " messages"].join(" · ");
+    meta.textContent = [t.market, t.direction, "v" + t.version, t.fee_per_filled_order.near + " NEAR per filled order", "free abstract, subscribe to read", t.message_count + " messages"].join(" · ");
     const who = document.createElement("div"); who.className = "meta";
     who.textContent = "by " + t.creator.near_account_id + " · " + (t.expired ? "expired " : "expires ") + new Date(t.expires_at).toLocaleString() + " (set by " + (SET_BY[t.expiry?.set_by] ?? "?") + ")" + " · minted on " + (t.mint?.ledger ?? "?") + (t.mint?.tx ? " (" + t.mint.tx + ")" : "");
     const idRow = document.createElement("div"); idRow.className = "tokenid";

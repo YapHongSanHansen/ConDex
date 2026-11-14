@@ -185,6 +185,10 @@ function applyClosing(ctx: Ctx, c: ClosingRow, ev: ExecutionEventInput): { effec
         throw badRequest("overfill", `Fill of ${qtyText} would exceed the closing order quantity ${c.quantity} (already filled ${c.filled_quantity})`);
       }
       updateClosing(ctx, c.id, { status: newFilled === total ? "filled" : "partially_filled", filled_quantity: formatDecimal(newFilled) });
+      // Each closing fill is added to the proof of trade of the order it closes.
+      ctx.ledger.recordClose(c.order_id, {
+        eventId: ev.eventId, quantity: qtyText, price: formatDecimal(parseDecimal(ev.price, "price")), closedAt: nowIso(), source: ev.source,
+      });
       return { effect: "closing_fill", quantity: qtyText };
     }
 
