@@ -232,6 +232,75 @@ describe("closing fills are idempotent and can come from a live venue", () => {
   });
 });
 
+// A trade can be closed with a closing order (above) or with a close event reported on the order that opened it.
+describe("the two ways to close a trade agree", () => {
+  const closeEvent = (orderId: string, body: Record<string, unknown>) => api("POST", `/v1/sim/orders/${orderId}/close`, { body });
+  const proofBody = async () => (await api("GET", `/v1/tokens/${s.tokenId}/proof`)).body;
+
+  test("a trade closed with a closing order counts in the verified results and the creator's score", async () => {
+    const closing = await close(await openShort("3500"));
+    await fill(closing.body.id, "2", "3400");
+    const proof = await proofBody();
+    assert.equal(proof.proofs_of_trade[0].closing_fill.complete, true);
+    assert.equal(proof.proofs_of_trade[0].result.net_profit_usd, 200);
+    assert.equal(proof.proofs_of_trade[0].result.net_return_pct, 2.86);
+    assert.equal(proof.verified_results.trades, 1);
+    assert.equal(proof.verified_results.net_profit_usd, 200);
+    const score = (await api("GET", "/v1/publishers/alice.testnet")).body.score;
+    assert.equal(score.borrowers.trades, 1);
+    assert.equal(score.borrowers.net_return_pct, 2.86);
+  });
+
+  test("a trade closed with a close event shows as closed, with the same result", async () => {
+    const orderId = await openShort("3500");
+    assert.equal((await closeEvent(orderId, { price: "3400" })).status, 201);
+    const trade = (await proofOf()).trade;
+    assert.equal(trade.status, "closed");
+    assert.equal(trade.open_quantity, "0");
+    assert.equal(trade.closing_fills.length, 1);
+    assert.equal(trade.result.pnl, "200");
+    assert.equal((await api("GET", `/v1/orders/${orderId}`, { key: s.bobTrade })).body.trade.status, "closed");
+    // Nothing is left to close with a closing order.
+    assert.equal((await close(orderId)).body.error.code, "already_closed");
+  });
+
+  test("a trade closed partly each way adds both up", async () => {
+    const orderId = await openShort("3500");
+    assert.equal((await closeEvent(orderId, { quantity: "1", price: "3450" })).status, 201);
+    const closing = await close(orderId);
+    assert.equal(closing.body.quantity, "1"); // only what the close event left open
+    await fill(closing.body.id, "1", "3350");
+    const proof = await proofOf();
+    assert.equal(proof.trade.status, "closed");
+    assert.equal(proof.trade.closed_quantity, "2");
+    assert.equal(proof.trade.closing_fills.length, 2);
+    assert.equal(proof.trade.result.exit_price, "3400");
+    assert.equal(proof.closing_fill.quantity, "2");
+    assert.equal(proof.closing_fill.complete, true);
+    assert.equal(proof.result.exit_price, "3400");
+    assert.equal(proof.result.net_profit_usd, 200);
+  });
+
+  test("a close event is refused while a closing order is still open, so a trade cannot be closed twice over", async () => {
+    const orderId = await openShort("3500");
+    const closing = await close(orderId);
+    const refused = await closeEvent(orderId, { price: "3400" });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, "closing_in_progress");
+    await api("POST", `/v1/sim/orders/${closing.body.id}/cancel`);
+    assert.equal((await closeEvent(orderId, { price: "3400" })).status, 201);
+    assert.equal((await proofOf()).trade.status, "closed");
+  });
+
+  test("a close event cannot be reported on a closing order", async () => {
+    const closing = await close(await openShort("3500"));
+    const refused = await closeEvent(closing.body.id, { quantity: "2", price: "3400" });
+    assert.equal(refused.status, 400);
+    assert.equal(refused.body.error.code, "close_on_closing_order");
+    assert.equal((await proofOf()).trade.status, "open");
+  });
+});
+
 describe("where the trade shows", () => {
   test("the borrower's order view shows the trade and its closing orders", async () => {
     const orderId = await openShort();

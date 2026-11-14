@@ -41,6 +41,12 @@ const publishShape = {
   entry: z.string().min(1).max(500).describe("When to enter, in the creator's own words"),
   invalidation: z.string().min(1).max(500).describe("What would prove the idea wrong, in the creator's own words"),
   target: z.string().max(500).optional().describe("Optional. When to take profit or close"),
+  entry_price: z.string().optional().describe(
+    "Optional. The entry as a price, if the creator gave one. With price levels ConDex can evaluate the thesis against " +
+    "market data after the expiry and count it in the creator's accuracy.",
+  ),
+  invalidation_price: z.string().optional().describe("Optional. The price that would prove the idea wrong"),
+  target_price: z.string().optional().describe("Optional. The price at which the thesis is right"),
   expiry_date: z.string().optional().describe(
     "Last day a trade can be linked to the thesis, YYYY-MM-DD in UTC. Ask the creator for it before publishing. " +
     "If they give none, leave it out: ConDex sets one and the result says so.",
@@ -123,8 +129,10 @@ export function buildMcpServer(opts: McpOptions): McpServer {
   server.registerTool("condex_get_proof", {
     title: "Get proof",
     description:
-      "Proof of thesis (creator, publish time, expiry and who set it, fingerprint, whether it is still preserved) and " +
-      "every proof of trade (trader, order, first fill, fee paid) for a token. Public; never includes the conversation.",
+      "Proof of thesis (creator, publish time, expiry and who set it, fingerprint, whether it is still preserved), " +
+      "the evaluation against market data after the expiry (whether the conditions were met), every proof of trade " +
+      "(trader, order, first fill, fee paid, closing fill and result) and the thesis's verified results " +
+      "(net return %, net profit $, maximum drawdown %). Public; never includes the conversation.",
     inputSchema: { token_id: z.string().describe("Token id, e.g. ins_...-v1") },
   }, ({ token_id }) => call("GET", `/v1/tokens/${encodeURIComponent(token_id)}/proof`));
 

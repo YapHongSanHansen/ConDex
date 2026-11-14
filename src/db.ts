@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -87,6 +87,10 @@ CREATE TABLE IF NOT EXISTS insight_versions (
   entry             TEXT NOT NULL,
   invalidation      TEXT NOT NULL,
   target            TEXT,
+  -- Optional price levels for the same conditions, so ConDex can evaluate them against market data.
+  entry_price        TEXT,
+  invalidation_price TEXT,
+  target_price       TEXT,
   -- Expiry. Every version has one.
   expires_at        TEXT NOT NULL,      -- ISO 8601, UTC
   expiry_time_given INTEGER NOT NULL,   -- 0: only a date was set, so it expires at the end of that day
@@ -171,7 +175,7 @@ CREATE TABLE IF NOT EXISTS closing_events (
 CREATE TABLE IF NOT EXISTS execution_events (
   id           TEXT PRIMARY KEY,          -- event id supplied by the execution integration
   order_id     TEXT NOT NULL REFERENCES orders(id),
-  type         TEXT NOT NULL,             -- accepted | fill | cancelled | rejected | expired | status_unknown
+  type         TEXT NOT NULL,             -- accepted | fill | cancelled | rejected | expired | status_unknown | close
   quantity     TEXT,
   price        TEXT,
   source       TEXT NOT NULL,             -- "simulated" or "venue:<name>"
@@ -233,9 +237,36 @@ CREATE TABLE IF NOT EXISTS ledger_txs (
   args        TEXT NOT NULL,
   created_at  TEXT NOT NULL
 );
+
+-- Market data and thesis evaluation ------------------------------------
+-- Prices recorded by the simulated market data feed (src/market/marketData.ts).
+CREATE TABLE IF NOT EXISTS market_prices (
+  id      TEXT PRIMARY KEY,
+  market  TEXT NOT NULL,
+  price   TEXT NOT NULL,
+  at      TEXT NOT NULL                -- ISO 8601, UTC
+);
+CREATE INDEX IF NOT EXISTS market_prices_by_time ON market_prices (market, at);
+
+-- Recorded once, after the evaluation deadline, and never changed.
+CREATE TABLE IF NOT EXISTS thesis_evaluations (
+  token_id          TEXT PRIMARY KEY REFERENCES insight_versions(token_id),
+  outcome           TEXT NOT NULL,     -- see Outcome in services/evaluation.ts
+  conditions_met    INTEGER,           -- 1 | 0 | NULL when it cannot be judged
+  reference_price   TEXT,              -- last price at publish time
+  final_price       TEXT,              -- last price at the deadline
+  entered_at        TEXT,
+  target_hit_at     TEXT,
+  invalidated_at    TEXT,
+  prices_used       INTEGER NOT NULL,
+  source            TEXT NOT NULL,     -- which market data feed
+  deadline          TEXT NOT NULL,
+  evaluated_at      TEXT NOT NULL
+);
 `;
 
 const ALL_TABLES = [
+  "thesis_evaluations", "market_prices",
   "ledger_txs", "ledger_reserves", "ledger_tokens", "ledger_balances",
   "closing_events", "closing_orders", "receipts", "execution_events", "orders", "quotes", "reads",
   "insight_versions", "insights", "sessions", "auth_challenges", "api_keys", "accounts",

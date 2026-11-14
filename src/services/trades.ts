@@ -196,6 +196,10 @@ function applyClosing(ctx: Ctx, c: ClosingRow, ev: ExecutionEventInput): { effec
       updateClosing(ctx, c.id, { status: ev.type });
       return { effect: "closing_ended", quantity: null };
     }
+
+    // A closing order's own fills close the trade. A close event belongs on the order that opened it.
+    case "close":
+      throw badRequest("close_on_closing_order", "A close event is reported on the order that opened the trade. Report a fill on a closing order instead");
   }
 }
 
@@ -211,7 +215,8 @@ function loadClosing(ctx: Ctx, id: string): ClosingRow {
   return row;
 }
 
-function activeClosing(ctx: Ctx, orderId: string): boolean {
+/** Whether a closing order for this trade is still waiting for fills. */
+export function activeClosing(ctx: Ctx, orderId: string): boolean {
   const rows = ctx.db.prepare("SELECT status FROM closing_orders WHERE order_id = ?").all(orderId) as Array<{ status: OrderStatus }>;
   return rows.some((r) => !TERMINAL_STATUSES.includes(r.status));
 }
@@ -221,11 +226,33 @@ function openQuantity(ctx: Ctx, order: OrderRow): bigint {
   return parseDecimal(order.filled_quantity, "filled_quantity") - closedQuantity(ctx, order.id);
 }
 
-function closedQuantity(ctx: Ctx, orderId: string): bigint {
-  const rows = ctx.db.prepare(
-    "SELECT filled_quantity FROM closing_orders WHERE order_id = ?",
-  ).all(orderId) as Array<{ filled_quantity: string }>;
-  return rows.reduce((sum, r) => sum + parseDecimal(r.filled_quantity, "filled_quantity"), 0n);
+/** How much of a trade's filled quantity has been closed so far, however it was closed. */
+export function closedQuantity(ctx: Ctx, orderId: string): bigint {
+  return closingFillsOf(ctx, orderId).reduce((sum, f) => sum + parseDecimal(f.quantity, "quantity"), 0n);
+}
+
+export interface ClosingFill { event_id: string; at: string; price: string; quantity: string; source: string }
+
+/**
+ * Every confirmed closing fill of a trade, oldest first. A trade can be closed in two ways and both count:
+ * the fills of a closing order (closeTrade), and a close event reported on the order that opened the trade
+ * (settlement.ts). The open quantity, the trade summary, the result and the track records all read this list,
+ * so they agree whichever way a trade was closed.
+ */
+export function closingFillsOf(ctx: Ctx, orderId: string): ClosingFill[] {
+  type Row = { id: string; quantity: string; price: string; source: string; received_at: string };
+  const fromClosingOrders = ctx.db.prepare(
+    `SELECT e.id, e.quantity, e.price, e.source, e.received_at
+       FROM closing_events e JOIN closing_orders c ON c.id = e.closing_id
+      WHERE c.order_id = ? AND e.type = 'fill' AND e.effect = 'closing_fill' ORDER BY e.received_at, e.rowid`,
+  ).all(orderId) as unknown as Row[];
+  const fromCloseEvents = ctx.db.prepare(
+    `SELECT id, quantity, price, source, received_at FROM execution_events
+      WHERE order_id = ? AND type = 'close' AND effect = 'position_closed' ORDER BY received_at, rowid`,
+  ).all(orderId) as unknown as Row[];
+  return [...fromClosingOrders, ...fromCloseEvents]
+    .map((f) => ({ event_id: f.id, at: f.received_at, price: f.price, quantity: f.quantity, source: f.source }))
+    .sort((a, b) => a.at.localeCompare(b.at));
 }
 
 // ---- views ----
@@ -274,8 +301,7 @@ function eventResult(ctx: Ctx, ev: ClosingEventRow, replayed: boolean) {
  */
 export function tradeSummary(ctx: Ctx, order: OrderRow) {
   const openedQty = parseDecimal(order.filled_quantity, "filled_quantity");
-  const closings = ctx.db.prepare("SELECT id FROM closing_orders WHERE order_id = ? ORDER BY created_at, rowid").all(order.id) as Array<{ id: string }>;
-  const closingFillList = closings.flatMap((c) => closingFills(ctx, c.id)).sort((a, b) => a.at.localeCompare(b.at));
+  const closingFillList = closingFillsOf(ctx, order.id);
   const closedQty = closingFillList.reduce((sum, f) => sum + parseDecimal(f.quantity, "quantity"), 0n);
 
   const openingFills = (ctx.db.prepare(
