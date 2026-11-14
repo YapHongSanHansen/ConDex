@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, Circle, Plug, ShieldCheck } from "lucide-react";
@@ -10,9 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/ui/code-block";
 import { CopyButton } from "@/components/ui/copy-button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/ui/states";
-import { MCP_API_URL } from "@/lib/config";
+import { MCP_API_URL, MCP_SERVER_PATH } from "@/lib/config";
 import { useWallet } from "@/lib/near/connector";
 import { formatDate } from "@/lib/utils";
 
@@ -26,13 +27,23 @@ const SCOPE_HELP: Record<Scope, { title: string; help: string }> = {
 /** The label the backend looks for when "Disconnect" revokes a user's MCP keys. */
 const MCP_LABEL = "MCP agent";
 
-// PROPOSED: the `condex-mcp` package is not published yet. The backend's own README runs
-// `node <path>/src/mcp/server.ts`. The two environment variables are the real ones.
-export function mcpCommand(secret: string | null) {
-  return `claude mcp add condex \\
-  --env CONDEX_API_URL=${MCP_API_URL} \\
-  --env CONDEX_API_KEY=${secret ?? "YOUR_KEY"} \\
-  -- npx -y condex-mcp`;
+/** The two lines the backend documents: the first removes an older entry, so the same lines also replace a key. */
+export function mcpCommand(secret: string | null, serverPath: string) {
+  return `claude mcp remove condex
+claude mcp add condex --env CONDEX_API_KEY=${secret ?? "YOUR_KEY"} --env CONDEX_API_URL=${MCP_API_URL} "--" node "${serverPath || MCP_SERVER_PATH}"`;
+}
+
+/** The path is the creator's own, so it is kept in this browser for next time. */
+function useServerPath() {
+  const [path, setPath] = useState(MCP_SERVER_PATH);
+  useEffect(() => {
+    try { const saved = window.localStorage.getItem("condex.mcpPath"); if (saved) queueMicrotask(() => setPath(saved)); } catch { /* storage blocked */ }
+  }, []);
+  const update = (next: string) => {
+    setPath(next);
+    try { window.localStorage.setItem("condex.mcpPath", next); } catch { /* storage blocked */ }
+  };
+  return [path, update] as const;
 }
 
 export const EXPORT_PROMPT = `Publish this conversation to ConDex.
@@ -64,6 +75,7 @@ export function CreatorSetup() {
   // The secret lives in component memory only. Never in storage, cookies or URLs.
   const [issued, setIssued] = useState<IssuedKey | null>(null);
   const [scopes, setScopes] = useState<Scope[]>(["publish"]);
+  const [serverPath, setServerPath] = useServerPath();
 
   const keysQ = useQuery({
     queryKey: ["keys"], queryFn: () => api.keys.list(), enabled: signedIn,
@@ -160,8 +172,11 @@ export function CreatorSetup() {
             <StepHeader n={2} title="Add the MCP server" done={connected} />
             <Badge tone={connected ? "accent" : "muted"}>{connected ? <Check className="h-3 w-3" aria-hidden /> : <Circle className="h-3 w-3" aria-hidden />}{connected ? "MCP connected" : "Waiting for Claude Code"}</Badge>
           </div>
-          <p className="text-sm text-muted">Run once in your terminal with your key. This page shows connected when Claude Code starts the server with it.</p>
-          <CodeBlock title="terminal" code={mcpCommand(issued?.secret ?? null)} />
+          <p className="text-sm text-muted">Run these two lines in your terminal. This page shows connected when Claude Code starts the server with your key.</p>
+          <label htmlFor="mcp-path" className="label-caps block">Where the backend is on your machine</label>
+          <Input id="mcp-path" value={serverPath} onChange={(e) => setServerPath(e.target.value)} spellCheck={false} className="font-mono text-xs" aria-describedby="mcp-path-help" />
+          <p id="mcp-path-help" className="text-xs text-muted">The full path to <span className="font-mono">src/mcp/server.ts</span> in the ConDex backend folder. It is kept in this browser.</p>
+          <CodeBlock title="terminal" code={mcpCommand(issued?.secret ?? null, serverPath)} />
           {connected && mcpKey?.mcp && (
             <div className="space-y-3 rounded-md border border-border p-3 text-sm">
               <p className="flex flex-wrap items-center gap-x-4 gap-y-1">

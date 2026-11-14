@@ -4,8 +4,9 @@ export const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/backend";
 // The backend address an agent (Claude Code's MCP server) uses. It runs on the user's machine, so this is a real URL, never the proxy path.
 export const MCP_API_URL = process.env.NEXT_PUBLIC_MCP_API_URL ?? "http://localhost:8787";
+// Where the backend's MCP server file is on the creator's machine. The Connect page lets them change it, so this is only the starting text.
+export const MCP_SERVER_PATH = process.env.NEXT_PUBLIC_MCP_SERVER_PATH ?? "/path/to/ConDex/src/mcp/server.ts";
 export const NEAR_NETWORK = "testnet" as const; // testnet-only by design
-export const CONTRACT_ID = process.env.NEXT_PUBLIC_CONTRACT_ID ?? "";
 export const EXPLORER_TX_URL =
   process.env.NEXT_PUBLIC_EXPLORER_TX_URL ?? "https://testnet.nearblocks.io/txns/";
 export const EXPLORER_ACCOUNT_URL = "https://testnet.nearblocks.io/address/";
