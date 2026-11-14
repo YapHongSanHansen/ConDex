@@ -47,6 +47,10 @@ export const publishBody = z.object({
   entry: condition(500, "when to enter, in the creator's words"),
   invalidation: condition(500, "what would prove the idea wrong, in the creator's words"),
   target: z.string().trim().max(500).nullable().optional(),
+  // Optional price levels for the same conditions, so ConDex can evaluate the thesis against market data.
+  entry_price: decimal.nullable().optional(),
+  invalidation_price: decimal.nullable().optional(),
+  target_price: decimal.nullable().optional(),
   summary: z.string().max(1000).nullable().optional(),
   // Expiry, in UTC: expiry_date with an optional expiry_time, or a full ISO expires_at instead.
   // With none of them, ConDex sets the expiry and says so in the response.
@@ -83,6 +87,12 @@ export const executionEventBody = z.object({
 export const simBody = z.object({
   quantity: decimal.optional(),
   price: decimal.optional(),
+});
+
+/** A price for the simulated market data feed. Without `at`, it is the price now. */
+export const simPriceBody = z.object({
+  price: decimal,
+  at: z.iso.datetime({ offset: true }).optional(),
 });
 
 export function parse<T extends z.ZodType>(schema: T, body: unknown): z.infer<T> {

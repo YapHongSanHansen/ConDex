@@ -34,6 +34,7 @@ describe("thesis conditions", () => {
   test("are recorded, served to connected readers and kept out of the public preview", async () => {
     const conditions = {
       market: "ETH-USD", direction: "short", entry: ETH_THESIS.entry, invalidation: ETH_THESIS.invalidation, target: ETH_THESIS.target,
+      entry_price: null, invalidation_price: null, target_price: null,
     };
     assert.deepEqual(s.published.body.conditions, conditions);
 

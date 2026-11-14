@@ -10,6 +10,7 @@ import { LlmExpiryEvaluator } from "../ai/llmExpiry.ts";
 import { type ExecutionVenue, SimulatedVenue } from "../execution/venue.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import { MockLedger } from "../ledger/mockLedger.ts";
+import { type MarketData, SimulatedMarketData } from "../market/marketData.ts";
 import { type AccessKeyChecker, NoAccessKeyCheck, RpcAccessKeyChecker } from "../near/accessKeys.ts";
 import { MCP_TOOLS, buildMcpServer } from "../mcp/server.ts";
 import { displayPath, findClaudeCli } from "../mcp/claudeCli.ts";
@@ -28,20 +29,21 @@ import { amount, parseNear } from "../util.ts";
 import { assertSameMachine, isSameMachine } from "./local.ts";
 import {
   depositBody, executionEventBody, issueKeyBody, nearCliConnectBody, orderBody, parse, publishBody, quoteBody, simBody,
-  updateMeBody, verifySignInBody,
+  simPriceBody, updateMeBody, verifySignInBody,
 } from "./schemas.ts";
 
 const TEST_PAGE = fileURLToPath(new URL("../../public/test.html", import.meta.url));
 const MCP_SERVER_PATH = fileURLToPath(new URL("../mcp/server.ts", import.meta.url));
 
 const SIM_ACTIONS: Record<string, EventType> = {
-  fill: "fill", cancel: "cancelled", reject: "rejected", expire: "expired", unknown: "status_unknown",
+  fill: "fill", cancel: "cancelled", reject: "rejected", expire: "expired", unknown: "status_unknown", close: "close",
 };
 
 export interface AppDeps {
   db?: Db;
   ledger?: Ledger;
   venue?: ExecutionVenue;
+  market?: MarketData;
   accessKeys?: AccessKeyChecker;
   /** Signer for one-click near-cli sign-in. Defaults to near-cli-rs if found (dev mode only); null disables it. */
   nearCli?: MessageSigner | null;
@@ -63,6 +65,7 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     db,
     ledger: deps.ledger ?? new MockLedger(db),
     venue: deps.venue ?? new SimulatedVenue(),
+    market: deps.market ?? new SimulatedMarketData(db),
     accessKeys: deps.accessKeys
       ?? (config.walletKeyCheck === "none" ? new NoAccessKeyCheck() : new RpcAccessKeyChecker(config.nearRpcUrl)),
     mcp: new Map(),
@@ -256,6 +259,9 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     entry: body.entry,
     invalidation: body.invalidation,
     target: body.target || null,
+    entryPrice: body.entry_price || null,
+    invalidationPrice: body.invalidation_price || null,
+    targetPrice: body.target_price || null,
     summary: body.summary ?? null,
     // An empty string (an empty form field) means "not given".
     expiryDate: body.expiry_date || null,
@@ -381,6 +387,18 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     if (!type) throw notFound(`Simulation action "${req.params.action}"`);
     const body = parse(simBody, req.body);
     res.status(201).json(simulate(ctx, req.params.orderId as string, type, body));
+  });
+
+  // Prices for the simulated market data feed, which theses are evaluated against after their deadline.
+  app.post("/v1/sim/market/:market/prices", devOnly, (req, res) => {
+    if (!(ctx.market instanceof SimulatedMarketData)) {
+      throw forbidden("not_simulated", "Prices can only be recorded on the simulated market data feed");
+    }
+    const body = parse(simPriceBody, req.body);
+    res.status(201).json({
+      source: ctx.market.name,
+      ...ctx.market.record(req.params.market as string, body.price, body.at ? new Date(body.at).toISOString() : new Date().toISOString()),
+    });
   });
 
   app.post("/v1/sim/events/:eventId/replay", devOnly, (req, res) => {

@@ -1,8 +1,10 @@
 import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
 import { badRequest, forbidden, notFound } from "../errors.ts";
+import { formatDecimal, parseDecimal } from "../quantity.ts";
 import { amount, canonicalJson, newId, nowIso, parseNear, sha256Hex } from "../util.ts";
 import { type AccountRow, type Principal, accountView, assertNearAccountId, getAccount, requireScope } from "./accounts.ts";
+import { accuracy, evaluateThesis, evaluationView, trackRecord, tradeResult } from "./evaluation.ts";
 import { type ExpirySetBy, type ResolvedExpiry, resolveExpiry } from "./expiry.ts";
 
 export interface Message {
@@ -28,6 +30,10 @@ export interface PublishInput {
   invalidation: string;
   /** Optional: when to take profit or close. */
   target?: string | null;
+  /** Optional price levels for entry, invalidation and target, so ConDex can evaluate the thesis against market data. */
+  entryPrice?: string | null;
+  invalidationPrice?: string | null;
+  targetPrice?: string | null;
   summary?: string | null;
   /** The last day a trade can be linked, YYYY-MM-DD (UTC). Without it, ConDex sets the expiry. */
   expiryDate?: string | null;
@@ -43,7 +49,8 @@ export interface PublishInput {
 export interface VersionRow {
   token_id: string; insight_id: string; version: number; creator_id: string; payout_account: string;
   fee_yocto: string; title: string; summary: string | null; market: string; direction: Direction; entry: string;
-  invalidation: string; target: string | null; expires_at: string; expiry_time_given: number;
+  invalidation: string; target: string | null; entry_price: string | null; invalidation_price: string | null;
+  target_price: string | null; expires_at: string; expiry_time_given: number;
   expiry_set_by: ExpirySetBy; expiry_reason: string | null; messages: string; content_hash: string; mint_tx: string;
   created_at: string;
 }
@@ -52,10 +59,13 @@ interface Conditions {
   market: string; direction: Direction; entry: string; invalidation: string; target: string | null;
 }
 
+/** The price levels of a thesis, as normalised decimal strings. Each is optional. */
+export type Levels = Pick<VersionRow, "entry_price" | "invalidation_price" | "target_price">;
+
 /** A publish request after validation, with its expiry settled. */
 interface Prepared extends Conditions {
   title: string; summary: string | null; feeYocto: bigint; payoutAccount: string; messages: Message[];
-  expiry: ResolvedExpiry;
+  levels: Levels; expiry: ResolvedExpiry;
 }
 
 /** Publishes a new insight. Its first version is minted as a token. */
@@ -90,7 +100,7 @@ export function listPreviews(ctx: Ctx, filter: { creatorId?: string; market?: st
   const clauses: string[] = [];
   const params: string[] = [];
   if (filter.creatorId) { clauses.push("creator_id = ?"); params.push(filter.creatorId); }
-  if (filter.market) { clauses.push("market = ?"); params.push(filter.market); }
+  if (filter.market) { clauses.push("market = ?"); params.push(filter.market.trim().toUpperCase()); }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = ctx.db.prepare(`SELECT * FROM insight_versions ${where} ORDER BY created_at DESC LIMIT 200`).all(...params) as unknown as VersionRow[];
   return rows.map((r) => previewView(ctx, r));
@@ -112,8 +122,17 @@ export function publisherProfile(ctx: Ctx, nearAccountId: string) {
   const { n: readCount } = ctx.db.prepare(
     "SELECT COUNT(*) AS n FROM reads r JOIN insight_versions v ON v.token_id = r.token_id WHERE v.creator_id = ?",
   ).get(account.id) as { n: number };
+  const versions = ctx.db.prepare("SELECT * FROM insight_versions WHERE creator_id = ?").all(account.id) as unknown as VersionRow[];
+  // Creators cannot link orders to their own theses (orders.ts), so every closed trade here is a borrower's.
+  const borrowerTrades = (ctx.db.prepare("SELECT order_id FROM receipts WHERE creator_id = ? ORDER BY created_at, rowid").all(account.id) as Array<{ order_id: string }>)
+    .map((r) => tradeResult(ctx, r.order_id).raw);
   return {
     publisher: accountView(account),
+    /** Calculated only from market data and proofs of trade. There is no self-reported or reputation figure. */
+    score: {
+      accuracy: accuracy(versions.map((v) => evaluateThesis(ctx, v))),
+      borrowers: trackRecord(borrowerTrades),
+    },
     stats: {
       insights: insightCount,
       reads: readCount,
@@ -185,6 +204,7 @@ export function thesisProof(ctx: Ctx, tokenId: string) {
     trader: string; fill_quantity: string | null; fill_price: string | null; fill_at: string | null;
   }>;
   const creator = accountView(getAccount(ctx, row.creator_id));
+  const results = new Map(trades.map((t) => [t.order_id, tradeResult(ctx, t.order_id)]));
   return {
     proof_of_thesis: {
       token_id: row.token_id,
@@ -201,6 +221,8 @@ export function thesisProof(ctx: Ctx, tokenId: string) {
       payout_account: row.payout_account,
       mint: { ledger: ctx.ledger.kind, tx: row.mint_tx },
     },
+    /** Whether the stated conditions were met in the market, judged once after the deadline. */
+    evaluation: evaluationView(ctx, row, evaluateThesis(ctx, row)),
     proofs_of_trade: trades.map((t) => ({
       receipt_id: t.receipt_id,
       thesis: { token_id: row.token_id, content_hash: row.content_hash },
@@ -210,10 +232,12 @@ export function thesisProof(ctx: Ctx, tokenId: string) {
       fill: { at: t.fill_at, price: t.fill_price, quantity: t.fill_quantity, source: t.evidence_source },
       fee_paid: amount(t.fee_yocto),
       settlement: { ledger: ctx.ledger.kind, tx: t.settle_tx },
-      // Closing fills are not tracked yet, so no result is calculated.
-      closing_fill: null,
+      closing_fill: results.get(t.order_id)!.closing_fill,
+      result: results.get(t.order_id)!.result,
       proven_at: t.proven_at,
     })),
+    /** Calculated from the closed proofs of trade above, never entered by hand. */
+    verified_results: trackRecord([...results.values()].map((r) => r.raw)),
   };
 }
 
@@ -237,12 +261,14 @@ async function prepare(ctx: Ctx, principal: Principal, input: PublishInput): Pro
     return text;
   };
   const conditions: Conditions = {
-    market: required("market", input.market),
+    // One spelling per market, so orders, price data and filters all match it.
+    market: required("market", input.market).toUpperCase(),
     direction: input.direction,
     entry: required("entry", input.entry),
     invalidation: required("invalidation", input.invalidation),
     target: input.target?.trim() || null,
   };
+  const levels = priceLevels(input);
   const feeYocto = parseNear(input.feeNear, "fee_near");
   const payoutAccount = input.payoutAccount ?? principal.account.near_account_id;
   assertNearAccountId(payoutAccount, "payout_account");
@@ -252,13 +278,38 @@ async function prepare(ctx: Ctx, principal: Principal, input: PublishInput): Pro
     { date: input.expiryDate?.trim() || null, time: input.expiryTime?.trim() || null, instant: input.expiresAt?.trim() || null },
     { title: input.title, summary, ...conditions, messages: input.messages },
   );
-  return { title: input.title, summary, ...conditions, feeYocto, payoutAccount, messages: input.messages, expiry };
+  return { title: input.title, summary, ...conditions, feeYocto, payoutAccount, messages: input.messages, levels, expiry };
+}
+
+/**
+ * Normalises the optional price levels and checks they agree with the direction: for a long thesis the
+ * invalidation is below the entry and the target above it, and the other way round for a short thesis.
+ */
+function priceLevels(input: PublishInput): Levels {
+  const level = (value: string | null | undefined, field: string) =>
+    value?.trim() ? parseDecimal(value.trim(), field, { positive: true }) : null;
+  const entry = level(input.entryPrice, "entry_price");
+  const invalidation = level(input.invalidationPrice, "invalidation_price");
+  const target = level(input.targetPrice, "target_price");
+  // Ordered from the invalidation, through the entry, to the target, as the price moves in the thesis's favour.
+  const path = [invalidation, entry, target].filter((p): p is bigint => p !== null);
+  const rising = input.direction === "long";
+  for (let i = 1; i < path.length; i++) {
+    if (rising ? path[i]! <= path[i - 1]! : path[i]! >= path[i - 1]!) {
+      throw badRequest("levels_inconsistent", rising
+        ? "For a long thesis, invalidation_price must be below entry_price, and target_price above it"
+        : "For a short thesis, invalidation_price must be above entry_price, and target_price below it");
+    }
+  }
+  const text = (p: bigint | null) => (p === null ? null : formatDecimal(p));
+  return { entry_price: text(entry), invalidation_price: text(invalidation), target_price: text(target) };
 }
 
 /** The stored fields the fingerprint covers. */
 type Fingerprinted = Pick<VersionRow,
   "token_id" | "insight_id" | "version" | "title" | "summary" | "market" | "direction" | "entry" | "invalidation" |
-  "target" | "expires_at" | "expiry_time_given" | "expiry_set_by" | "expiry_reason" | "messages">;
+  "target" | "entry_price" | "invalidation_price" | "target_price" | "expires_at" | "expiry_time_given" | "expiry_set_by" |
+  "expiry_reason" | "messages">;
 
 /**
  * The fingerprint (content_hash) of one thesis version. It covers the conditions, the expiry with who set
@@ -273,7 +324,10 @@ function fingerprint(r: Fingerprinted): string {
     version: r.version,
     title: r.title,
     summary: r.summary,
-    conditions: { market: r.market, direction: r.direction, entry: r.entry, invalidation: r.invalidation, target: r.target },
+    conditions: {
+      market: r.market, direction: r.direction, entry: r.entry, invalidation: r.invalidation, target: r.target,
+      entry_price: r.entry_price, invalidation_price: r.invalidation_price, target_price: r.target_price,
+    },
     expiry: { expires_at: r.expires_at, time_given: r.expiry_time_given === 1, set_by: r.expiry_set_by, reason: r.expiry_reason },
     messages: JSON.parse(r.messages) as Message[],
   }));
@@ -289,7 +343,7 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
   const tokenId = `${insightId}-v${version}`;
   const stored: Fingerprinted = {
     token_id: tokenId, insight_id: insightId, version, title: p.title, summary: p.summary,
-    market: p.market, direction: p.direction, entry: p.entry, invalidation: p.invalidation, target: p.target,
+    market: p.market, direction: p.direction, entry: p.entry, invalidation: p.invalidation, target: p.target, ...p.levels,
     expires_at: p.expiry.expiresAt, expiry_time_given: p.expiry.timeGiven ? 1 : 0, expiry_set_by: p.expiry.setBy,
     expiry_reason: p.expiry.reason, messages: JSON.stringify(p.messages),
   };
@@ -307,12 +361,13 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
   });
   ctx.db.prepare(
     `INSERT INTO insight_versions (token_id, insight_id, version, creator_id, payout_account, fee_yocto, title, summary,
-       market, direction, entry, invalidation, target, expires_at, expiry_time_given, expiry_set_by, expiry_reason,
-       messages, content_hash, mint_tx, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       market, direction, entry, invalidation, target, entry_price, invalidation_price, target_price, expires_at,
+       expiry_time_given, expiry_set_by, expiry_reason, messages, content_hash, mint_tx, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     tokenId, insightId, version, principal.account.id, p.payoutAccount, p.feeYocto.toString(), p.title, p.summary,
-    p.market, p.direction, p.entry, p.invalidation, p.target, p.expiry.expiresAt, p.expiry.timeGiven ? 1 : 0,
+    p.market, p.direction, p.entry, p.invalidation, p.target, p.levels.entry_price, p.levels.invalidation_price,
+    p.levels.target_price, p.expiry.expiresAt, p.expiry.timeGiven ? 1 : 0,
     p.expiry.setBy, p.expiry.reason, stored.messages, contentHash, tx, createdAt,
   );
   const row = getVersion(ctx, tokenId);
@@ -370,6 +425,9 @@ function previewView(ctx: Ctx, r: VersionRow) {
 function detailView(ctx: Ctx, r: VersionRow) {
   return {
     ...previewView(ctx, r),
-    conditions: { market: r.market, direction: r.direction, entry: r.entry, invalidation: r.invalidation, target: r.target },
+    conditions: {
+      market: r.market, direction: r.direction, entry: r.entry, invalidation: r.invalidation, target: r.target,
+      entry_price: r.entry_price, invalidation_price: r.invalidation_price, target_price: r.target_price,
+    },
   };
 }

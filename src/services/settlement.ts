@@ -7,7 +7,7 @@ import type { Principal } from "./accounts.ts";
 import { getVersion } from "./insights.ts";
 import { type OrderRow, type OrderStatus, TERMINAL_STATUSES, loadOrder, orderView } from "./orders.ts";
 
-export const EVENT_TYPES = ["accepted", "fill", "cancelled", "rejected", "expired", "status_unknown"] as const;
+export const EVENT_TYPES = ["accepted", "fill", "cancelled", "rejected", "expired", "status_unknown", "close"] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
 export interface ExecutionEventInput {
@@ -30,7 +30,8 @@ export type Effect =
   | "closed_after_fill"     // cancelled/expired after a fill: fee was already settled
   | "settlement_pending"    // venue status unknown: nothing moves until the outcome is known
   | "ignored_terminal"      // order already finished: event recorded, nothing changes
-  | "fill_after_release";   // fill reported after the reserve was released: needs manual review, no payout
+  | "fill_after_release"    // fill reported after the reserve was released: needs manual review, no payout
+  | "position_closed";      // closing fill for (part of) the filled quantity: recorded for the result, no payout
 
 interface EventRow {
   id: string; order_id: string; type: EventType; quantity: string | null; price: string | null; source: string;
@@ -101,6 +102,10 @@ export function simulate(ctx: Ctx, orderId: string, type: EventType, opts: { qua
     // Default: fill whatever is left.
     quantity = formatDecimal(parseDecimal(order.quantity, "quantity") - parseDecimal(order.filled_quantity, "filled"));
   }
+  if (type === "close" && !quantity) {
+    // Default: close whatever is still open.
+    quantity = formatDecimal(parseDecimal(order.filled_quantity, "filled") - closedQuantity(ctx, order.id));
+  }
   return ingestEvent(ctx, {
     eventId: newId("simevt"), orderId, type, quantity: quantity ?? null, price: opts.price ?? null, source: "simulated",
   });
@@ -142,6 +147,8 @@ function apply(ctx: Ctx, order: OrderRow, ev: ExecutionEventInput): { effect: Ef
     case "fill": {
       if (ev.quantity == null) throw badRequest("quantity_required", "A fill event needs quantity");
       const qty = parseDecimal(ev.quantity, "quantity", { positive: true });
+      // A zero price would give the trade no entry value, and so no result.
+      if (ev.price != null) parseDecimal(ev.price, "price", { positive: true });
       const qtyText = formatDecimal(qty);
       if (order.settlement_status === "released") {
         return { effect: "fill_after_release", receiptId: null, quantity: qtyText };
@@ -177,7 +184,29 @@ function apply(ctx: Ctx, order: OrderRow, ev: ExecutionEventInput): { effect: Ef
       update(ctx, order.id, { status: ev.type, venue_status_known: 1, settlement_status: "released" });
       return { effect: "released", receiptId: null, quantity: null };
     }
+
+    // Closing the position the order opened. Nothing is paid: the fee was settled on the first fill.
+    // The closing fills give the trade its result (services/evaluation.ts).
+    case "close": {
+      if (filled === 0n) throw conflict("nothing_to_close", "This order has no fills, so there is no position to close");
+      const open = filled - closedQuantity(ctx, order.id);
+      if (open === 0n) throw conflict("nothing_to_close", "The position is already fully closed");
+      if (ev.quantity == null || ev.price == null) throw badRequest("close_needs_fill", "A close event needs quantity and price");
+      const qty = parseDecimal(ev.quantity, "quantity", { positive: true });
+      parseDecimal(ev.price, "price", { positive: true });
+      if (qty > open) {
+        throw badRequest("overclose", `Close of ${formatDecimal(qty)} exceeds the open position ${formatDecimal(open)}`);
+      }
+      return { effect: "position_closed", receiptId: order.receipt_id, quantity: formatDecimal(qty) };
+    }
   }
+}
+
+/** How much of an order's filled quantity has been closed so far. */
+function closedQuantity(ctx: Ctx, orderId: string): bigint {
+  const rows = ctx.db.prepare("SELECT quantity FROM execution_events WHERE order_id = ? AND effect = 'position_closed'")
+    .all(orderId) as Array<{ quantity: string }>;
+  return rows.reduce((sum, r) => sum + parseDecimal(r.quantity, "quantity"), 0n);
 }
 
 function createReceiptAndSettle(ctx: Ctx, order: OrderRow, ev: ExecutionEventInput): string {
