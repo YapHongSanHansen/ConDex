@@ -1,5 +1,6 @@
 import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
+import { describeSource } from "../market/coinGecko.ts";
 import type { PricePoint } from "../market/marketData.ts";
 import { formatDecimal, parseDecimal } from "../quantity.ts";
 import { nowIso } from "../util.ts";
@@ -48,6 +49,9 @@ export function evaluateThesis(ctx: Ctx, row: VersionRow): EvaluationRow | null 
   if (nowIso() < deadline) return null;
   const stored = ctx.db.prepare("SELECT * FROM thesis_evaluations WHERE token_id = ?").get(row.token_id) as EvaluationRow | undefined;
   if (stored) return stored;
+  // An outcome is recorded once and never changed, so it waits until the feed holds every price of the
+  // window. This only reads the feed's local cache: fetching is the sweep's job (evaluationSweep.ts).
+  if (!ctx.market.covers(row.market, row.created_at, deadline)) return null;
 
   const ev = { token_id: row.token_id, ...judge(row, ctx.market.priceAt(row.market, row.created_at),
     ctx.market.between(row.market, row.created_at, deadline)), source: ctx.market.name, deadline, evaluated_at: nowIso() };
@@ -74,6 +78,10 @@ export function evaluateThesis(ctx: Ctx, row: VersionRow): EvaluationRow | null 
  * Walks the prices after publishing up to the deadline. The reference (the last price at publish) is only the
  * starting point: nothing from before publishing can hit a level. The invalidation counts from the start; the
  * target counts only once the thesis is entered (at its entry price, or at publish when it has none).
+ *
+ * A point from a live feed is a candle, and a level counts as reached when the candle's high or low touched
+ * it. A candle that touched both the invalidation and the target counts as invalidated: which came first
+ * inside it is unknown, so the thesis does not get the benefit of the doubt.
  */
 function judge(row: VersionRow, reference: PricePoint | null, later: PricePoint[]) {
   const base = {
@@ -111,15 +119,21 @@ function judge(row: VersionRow, reference: PricePoint | null, later: PricePoint[
   }
   for (const p of later) {
     const price = parseDecimal(p.price, "price");
-    if (enteredPrice === null && (entry === null || reached(price, entry, true))) {
-      enteredPrice = price;
+    // How far the price went in the thesis's favour and against it. A single price is both.
+    const high = p.high === undefined ? price : parseDecimal(p.high, "price");
+    const low = p.low === undefined ? price : parseDecimal(p.low, "price");
+    const best = long ? high : low;
+    const worst = long ? low : high;
+    if (enteredPrice === null && (entry === null || reached(best, entry, true))) {
+      // Inside a candle the price crossed the entry level itself, wherever the candle then closed.
+      enteredPrice = entry !== null && p.high !== undefined ? entry : price;
       base.entered_at = p.at;
     }
-    if (invalidation !== null && reached(price, invalidation, false)) {
+    if (invalidation !== null && reached(worst, invalidation, false)) {
       base.invalidated_at = p.at;
       return result("invalidated");
     }
-    if (enteredPrice !== null && target !== null && reached(price, target, true)) {
+    if (enteredPrice !== null && target !== null && reached(best, target, true)) {
       base.target_hit_at = p.at;
       return result("target_hit");
     }
@@ -132,7 +146,17 @@ function judge(row: VersionRow, reference: PricePoint | null, later: PricePoint[
 
 /** Public view of an evaluation. The price levels themselves stay private with the conditions. */
 export function evaluationView(ctx: Ctx, row: VersionRow, ev: EvaluationRow | null) {
-  if (!ev) return { status: "pending" as const, deadline: row.evaluation_deadline, source: ctx.market.name };
+  // A thesis published under the dev replay clock was judged on real prices of a past window, replayed.
+  const replay = row.replayed === 1 ? { clock: "replay" as const } : {};
+  if (!ev) {
+    return {
+      status: "pending" as const, deadline: row.evaluation_deadline, source: ctx.market.name,
+      // Past the deadline and still pending: the feed's prices for the window are not all in yet.
+      ...(nowIso() >= row.evaluation_deadline ? { waiting_for: "market_data" as const } : {}),
+      ...describeSource(ctx.market.name, row.market),
+      ...replay,
+    };
+  }
   return {
     status: "evaluated" as const,
     outcome: ev.outcome,
@@ -149,6 +173,9 @@ export function evaluationView(ctx: Ctx, row: VersionRow, ev: EvaluationRow | nu
     evaluated_at: ev.evaluated_at,
     /** Where it is recorded on the thesis token: "pending:<id>" until the call is sent on NEAR. */
     recorded: { ledger: ctx.ledger.kind, tx: ev.evaluation_tx },
+    /** For a live feed: which pool priced the market, how candles are read, and the attribution it requires. */
+    ...describeSource(ev.source, row.market),
+    ...replay,
   };
 }
 

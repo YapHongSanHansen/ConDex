@@ -9,8 +9,42 @@ export function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
+// ---- Clocks -------------------------------------------------------------
+// ConDex keeps two clocks. The business clock times everything a thesis and its trades go through: publishing,
+// expiry, quotes, orders, fills, closes and the evaluation. In dev mode it can be set to a past moment, so a
+// demo can replay a real market window (see services/replay.ts). The system clock is always real time, and is
+// what sign-in, sessions, API keys and subscriptions use, so a replay never logs anyone out.
+
+/** The moment the business clock is frozen at, in Unix milliseconds. null: it follows real time. */
+let replayAt: number | null = null;
+
+/** The business clock, in Unix milliseconds. */
+export function nowMs(): number {
+  return replayAt ?? Date.now();
+}
+
+/** The business clock, as ISO 8601. */
 export function nowIso(): string {
+  return new Date(nowMs()).toISOString();
+}
+
+/** Real time, whatever the business clock says. */
+export function systemNowIso(): string {
   return new Date().toISOString();
+}
+
+/** Freezes the business clock at a moment. It stays there until it is set again or cleared. */
+export function setReplayClock(atMs: number): void {
+  replayAt = atMs;
+}
+
+export function clearReplayClock(): void {
+  replayAt = null;
+}
+
+/** The moment a replay is frozen at, as ISO 8601, or null when the business clock follows real time. */
+export function replayClock(): string | null {
+  return replayAt === null ? null : new Date(replayAt).toISOString();
 }
 
 /** JSON with object keys sorted, so the same content always hashes the same way. */

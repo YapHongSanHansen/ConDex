@@ -4,7 +4,7 @@
 
 Anyone can read a thesis’s abstract and its author’s accuracy for free; an active ConDex subscription unlocks the complete thesis. A borrower pays a usage fee only when a trade they linked to that NFT receives a confirmed fill, and the fee goes to the creator. Each filled trade is recorded on the NFT as a proof of trade, and the creator’s score is calculated from those proofs and from ConDex’s own evaluation of each thesis against market data. Nothing in it is reported by the creator.
 
-> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing with conditions and an expiry, free abstracts with the author’s score, the subscription that unlocks the full thesis, matching a trade to its thesis, a public proof of thesis and trade, paying the creator per filled trade, closing a trade, evaluating a thesis against a simulated market data feed, verified results and the creator score work today. The creator’s own track record, a live market data feed, the NEAR testnet contract and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
+> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing with conditions and an expiry, free abstracts with the author’s score, the subscription that unlocks the full thesis, matching a trade to its thesis, a public proof of thesis and trade, paying the creator per filled trade, closing a trade, evaluating a thesis against real market prices from CoinGecko (or a simulated feed), verified results and the creator score work today, and a dev-mode replay runs a past market window at its real prices. The API also runs on the NEAR testnet contract when its keys are configured. The creator’s own track record and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
 
 ## The problem
 
@@ -145,7 +145,9 @@ The thesis NFT is not a fractional or transferable revenue-sharing token. Splitt
 After a thesis expires, ConDex judges it against market data and records whether its conditions were met. The creator does not report this and cannot change it.
 
 - **When.** Once, after the evaluation deadline. Until then the evaluation is pending, because the price can still reach any level. The deadline is separate from the expiry: the expiry is the last moment a trade can be linked, and the evaluation deadline, which is the expiry unless the creator set a later one, gives a trade opened just before the expiry time to play out. It is fixed once published and covered by the fingerprint.
-- **Against what.** The market’s prices from the moment of publishing up to the evaluation deadline, from a connected market data feed. The evaluation names the feed it used.
+- **Against what.** The market’s prices from the moment of publishing up to the evaluation deadline, from a connected market data feed. The evaluation names the feed it used. ConDex’s live feed is CoinGecko: one-minute candles of the pool that prices the market (for ETH-USD, the Uniswap v3 WETH/USDC pool on Ethereum).
+- **How candles are read.** A level counts as reached when a candle’s high or low touched it. A candle that touched both the target and the invalidation counts as invalidated, because which came first inside it is unknown. The candle the thesis was published in counts by its close only.
+- **Only on complete data.** ConDex judges a thesis once it holds every candle of its window, a few minutes after the deadline. A feed that is down or rate-limited delays the evaluation. It never becomes the outcome.
 - **With what.** The thesis’s price levels. A thesis counts as entered when the price reaches its entry price, or at publishing when it has no entry price or the price is already past it. The invalidation price counts from publishing. The target price counts only once the thesis is entered.
 - **Fixed once recorded.** A later price cannot change the outcome.
 - **On the NFT.** The outcome is recorded on the thesis NFT, so the token carries its own evaluation. The contract refuses it before the token’s evaluation deadline (the expiry unless the creator set a later one) and never lets it change. Tokens minted before the deadline existed are judged at their expiry.
@@ -163,7 +165,7 @@ After a thesis expires, ConDex judges it against market data and records whether
 
 A thesis with no price levels is judged on its direction alone, by comparing the price at the expiry with the price at publishing.
 
-The evaluation is public. It shows the outcome, the market price at publishing and at the expiry, and when each level was reached. It does not show the creator’s price levels, which stay with the conditions.
+The evaluation is public. It shows the outcome, the market price at publishing and at the expiry, and when each level was reached. On a live feed it also names the pool the prices came from and carries the feed’s attribution, so anyone can look up the same candles. It does not show the creator’s price levels, which stay with the conditions.
 
 ## Creator score
 
@@ -204,7 +206,7 @@ The figures are before trading costs. The usage fee is paid in NEAR, so it is sh
 | Execution integration | Submit or track the authorised order, and report its fills and its close. The prototype trusts this service to report the execution accurately. |
 | Private storage | Store the approved messages and thesis conditions off-chain. Only their fingerprint goes on NEAR. |
 | ConDex AI | Set the expiry date when the creator gives none, and record why. |
-| Market data feed | Supply the prices each thesis is evaluated against after its expiry. |
+| Market data feed | Supply the prices each thesis is evaluated against after its expiry: one-minute candles from CoinGecko. |
 | Score service | Evaluate each thesis against market data after its expiry, and calculate each NFT’s verified results and each creator’s score. |
 
 ## What the prototype does today
@@ -222,12 +224,13 @@ The API and code call a thesis an *insight*, and its fingerprint a `content_hash
 | Original conditions preserved | Built. A published version cannot be edited. Its fingerprint covers the conditions and the expiry, a reader can recompute it, and every read re-checks the stored content against the minted hash (`integrity.matches`). A change is a new version with a new token. |
 | Proof of thesis | Built, against the mock ledger. `GET /v1/tokens/:id/proof` is public and shows the creator, publish time, expiry and who set it, fingerprint, fee, mint transaction and whether the thesis is still `preserved`. It never includes the conversation or the creator’s entry, invalidation and target. |
 | Proof of trade on the NFT | Built, against the mock ledger. The same endpoint lists each proof of trade: trader, role, the order, the first fill (time, price, quantity, evidence source), the fee paid and the settlement transaction. A trade is closed by a `close` execution event on its order, with a quantity and a price (see [Closing a trade and reading the results](#closing-a-trade-and-reading-the-results)). The proof then shows `closing_fill`: the average closing price, the quantity closed, and `complete` once the whole trade is closed. A fully closed trade has a `result`: entry and exit price, entry value, net profit in dollars and net return %. A trader can also close with a closing order, `POST /v1/orders/:orderId/close` (MCP: `condex_close_trade`), on the opposite side with no fee. Its confirmed fills count as closing fills in the same way, and `trade` shows the status (`open`, `partially_closed` or `closed`), each closing fill and a running result. Each result is in the market's quote currency and excludes the NEAR usage fee. Only the fee payment is written to the mock ledger, so the closing fill is not yet on NEAR. |
-| Thesis evaluation | Built, against a simulated market data feed. Prices are recorded with `POST /v1/sim/market/:market/prices` in dev mode, and there is no live feed yet. Before the expiry the proof endpoint shows `evaluation.status: "pending"`. The first request for the proof or the publisher page after the expiry evaluates the thesis and stores the outcome, which is never changed. `expires_at` is the last moment to link a trade; the evaluation waits for `evaluation_deadline`, which is the same moment unless the creator set a later one. With the NEAR contract, the evaluation is also recorded on the thesis NFT (`record_evaluation`, refused before the expiry by the chain's clock, never replaced), and a sweep evaluates expired theses every minute without anyone opening them; the proof shows the transaction as `evaluation.recorded.tx`. |
+| Thesis evaluation | Built. With `CONDEX_COINGECKO_API_KEY` set, theses are judged on real one-minute candles from CoinGecko (`source: "feed:coingecko"`, with the pool and the attribution in the evaluation). A sweep fetches the candles in the background every minute and keeps them locally, so no request waits on CoinGecko, and a thesis stays `pending` (with `waiting_for: "market_data"` once past its deadline) until its whole window is held: it is judged a few minutes after the deadline. Only ETH-USD has a pool configured; another market is recorded as `no_data`. Without the key the feed is the simulated one: prices are recorded with `POST /v1/sim/market/:market/prices` in dev mode, and the first request for the proof or the publisher page after the deadline evaluates the thesis. Before the deadline the proof endpoint shows `evaluation.status: "pending"`. The outcome is stored once and never changed. `expires_at` is the last moment to link a trade; the evaluation waits for `evaluation_deadline`, which is the same moment unless the creator set a later one. With the NEAR contract, the evaluation is also recorded on the thesis NFT (`record_evaluation`, refused before the expiry by the chain's clock, never replaced), and a sweep evaluates expired theses every minute without anyone opening them; the proof shows the transaction as `evaluation.recorded.tx`. |
 | Verified results | Built. `verified_results` on the proof endpoint gives the number of fully closed trades, net return %, net profit in dollars and maximum drawdown % for that thesis, before trading costs. They are calculated on each request and are not written to the mock ledger. |
 | Matching | Built for checks 1 to 4. An order in another market, against the thesis’s direction or after the expiry is refused before any fee is reserved, and each linked order records what was checked. Check 5 uses the simulated venue or the execution endpoint. |
 | Pay per filled trade, to the creator | Built, against the mock ledger. The whole fee goes to the payout account named at publishing. |
 | Abstract and subscription | Built, against the mock ledger. `GET /v1/tokens` and `GET /v1/tokens/:id/preview` are public and carry `author_score` (accuracy and the borrowers’ track record) and the subscription terms (`unlock`). `GET /v1/tokens/:id` needs a read key and an active subscription, or answers 402 `subscription_required`; the creator reads their own without one. `POST /v1/subscription` charges one period to `CONDEX_TREASURY_ACCOUNT`. With `CONDEX_LEDGER=near` the API reads subscriptions from the NEAR contract (`subscription_of`) instead, and the trader subscribes there. |
 | The borrower’s one approval, verified on NEAR | Built, with `CONDEX_LEDGER=near`. The order waits as `awaiting_approval` until the borrower signs `reserve_fee` from their own account; `POST /v1/orders/:id/confirm-approval` checks it on the contract before submitting. On the default mock ledger, ConDex’s server reserves the fee after checking the borrower’s trade key. |
+| Replaying a past window | Built, in dev mode on the mock ledger. `POST /v1/dev/clock` freezes ConDex’s clock at a past moment, and each later step fills the orders resting on the simulated venue at the close of the next real candle and judges the theses whose deadline has passed. A thesis published this way shows `clock: "replay"` on its abstract, its proof and its evaluation. Sign-in, API keys and subscriptions stay on real time. NEAR’s own clock cannot be moved, so the replay is refused there. See [Real prices and replaying a past window](#real-prices-and-replaying-a-past-window). |
 | Creator’s own trades | Not built. A creator cannot link an order to their own thesis. |
 | Creator score | Partly. The publisher page (`GET /v1/publishers/:account`) shows `score.accuracy`: theses judged, conditions met, accuracy %, pending and not judged. It also shows `score.borrowers`, the track record of borrowers’ trades: closed trades, net return %, net profit in dollars and maximum drawdown %. The creator’s own track record is not built, because a creator cannot link an order to their own thesis. |
 
@@ -256,7 +259,42 @@ node scripts/testnet-flow.ts   # one full trade through the API on testnet
 
 By default, with `npm run dev`: Nothing is written to disk, and everything (sign-ins, API keys, published insights, orders, mock balances) starts empty whenever the server restarts, including each automatic restart of `npm run dev`. After a restart, reconnect your wallet (one click) and create a new MCP key; the test console notices the ended session and says so, and **Run every button** sets the test data up again. To keep data between restarts instead, set `CONDEX_DB_PATH=data/condex.db` (a local SQLite file, built into Node).
 
-The test console has a button for most API actions and demo checklist items. It has none yet for recording market prices or reporting a close event; `npm test` covers those. **Run every button** resets the data, clicks each one in order and reports pass or fail.
+The test console has a button for most API actions and demo checklist items. It has none yet for recording market prices, reporting a close event or the replay clock; `npm test` covers those. **Run every button** resets the data, clicks each one in order and reports pass or fail.
+
+### Real prices and replaying a past window
+
+Put a CoinGecko Demo API key in the git-ignored `.env` file as `CONDEX_COINGECKO_API_KEY`. From then on theses are judged on real one-minute candles, and the startup line says `market data: feed:coingecko`. Market data provided by [CoinGecko](https://www.coingecko.com/).
+
+```sh
+npm run snapshot -- ETH-USD 2026-08-19T14:30:00Z 2026-08-19T16:30:00Z   # save a window of candles to demo/candles
+npm run replay -- set "2026-08-19 23:22"   # put ConDex at a past moment (this computer's time zone)
+npm run replay -- to 23:32                 # step forward: fills resting orders, judges due theses, prints the price
+npm run replay -- status
+npm run replay -- reset                    # back to real time; accounts, keys and data are kept
+npm run testnet:pairs -- <creator> <trader> 15 30 45   # real long and short pairs on NEAR testnet
+```
+
+**Saved windows.** CoinGecko’s Demo plan only serves the last six months of minute candles. A window saved with `npm run snapshot` is loaded at startup, so it can be judged and replayed without the network and after it has left that history. `demo/candles/eth-usd-2026-08-19.json` holds 19 August 2026, 14:30 to 16:30 UTC.
+
+**The demo replay.** On 19 August 2026 between 23:22 and 23:43 (UTC+8) ETH broke out, pulled back and bounced. Start the API with `CONDEX_LEDGER=mock`, connect both wallets, then:
+
+| Step | Replay clock (UTC+8) | What happens | ETH |
+| --- | --- | --- | --- |
+| `set "2026-08-19 23:22"` | 23:22 | Alice’s agent reads candles with `condex_get_candles`. Nothing after this moment is shown. | 2,010.45 |
+| `to 23:32` | 23:32 | Alice publishes: long, target 2,080, invalidation 2,050, `expires_at` 23:38, `evaluation_deadline` 23:43. | 2,072.65 |
+| `to 23:34` | 23:34 | Bob reads and buys. The order is open and his fee is reserved. | 2,061.38 |
+| `to 23:35` | 23:35 | The order fills at the close of the next candle. Only now is Alice paid. | 2,065.39 |
+| `to 23:42` | 23:42 | Bob asks to close. The target was touched at 23:40 (high 2,082.38). | 2,081.53 |
+| `to 23:43` | 23:43 | The close fills, and the thesis is judged: target hit, conditions met. | 2,082.34 |
+
+Times in the requests are UTC: 23:38 UTC+8 is `2026-08-19T15:38:00Z`. `test/replay.test.ts` runs this sequence on the saved candles.
+
+- **What is real and what is not.** The prices are real. The clock is replayed, the venue is simulated (it fills at the real candle price) and the ledger is the mock. Everything published during a replay is marked `clock: "replay"`.
+- **Use `npm start` for a replay,** not `npm run dev`: a restart loses the clock and the data.
+- **An agent’s own clock is still today’s.** `condex_get_candles` returns `now`, the moment ConDex is at. An agent should take its expiry and deadline from that.
+- **`/v1/dev/reset` wipes accounts and keys.** `npm run replay -- reset` only puts the clock back.
+
+**Real examples on NEAR.** A replay cannot run on NEAR, and nobody can predict a live window. `npm run testnet:pairs` publishes a long and a short thesis on the same window, links one trade to each from the trader’s own account, fills and closes them at the live CoinGecko price, and waits for both evaluations to be recorded on their tokens. Unless ETH ends exactly where it started, one of each pair comes out right. It needs the API on NEAR with the CoinGecko key, the trader’s key in near-cli, and `CONDEX_DB_PATH` set so the orders are kept. `--mock` runs the same thing on the mock ledger as a dry run.
 
 ### Connect wallet (top right of the test console)
 
@@ -363,7 +401,9 @@ In dev mode, `POST /v1/sim/orders/:orderId/close` with a `price` does the same o
 
 `GET /v1/tokens/:tokenId/proof` returns the outcome. Besides the proof of thesis it holds `evaluation` (pending, or the outcome once the thesis has expired), each proof of trade with its `closing_fill` and `result`, and `verified_results` for the thesis. `GET /v1/publishers/:account` returns the creator’s `score`: `accuracy` and the `borrowers` track record. Both are public.
 
-In dev mode, `POST /v1/sim/market/:market/prices` with a `price` and an optional `at` records a price on the simulated market data feed.
+In dev mode, `POST /v1/sim/market/:market/prices` with a `price` and an optional `at` records a price on the simulated market data feed. On the CoinGecko feed that route is refused, and a simulated fill or close sent without a `price` takes the feed’s current price.
+
+`GET /v1/market/:market/candles` returns the one-minute candles the evaluation reads, for any connected wallet or API key (MCP: `condex_get_candles`). `from` and `to` are optional ISO times: without them it is the last 30 minutes, at most 1,000 candles, and never past `now`, which during a replay is the replayed moment.
 
 ### Connecting an agent over MCP
 
@@ -390,7 +430,11 @@ The MCP tools have exactly the scopes of that key: `publish`, `read` and/or `tra
 | `src/services/expiry.ts`, `src/ai/` | The expiry of a version: the creator’s own, or ConDex’s AI (`llmExpiry.ts` for an OpenAI-compatible model, `claudeExpiry.ts` for Claude), or ConDex’s default. |
 | `src/services/orders.ts` | Fee quotes, matching an order to its thesis, fee reservation and order submission. |
 | `src/services/settlement.ts` | Execution events → one payout on the first fill, release on no-fill endings, close events, idempotent replays. |
-| `src/services/evaluation.ts`, `src/market/` | Evaluating a thesis against market data after its expiry, the result of each closed trade, verified results and the creator score. `MarketData` interface and the simulated feed. |
+| `src/services/evaluation.ts`, `src/market/` | Evaluating a thesis against market data after its expiry, the result of each closed trade, verified results and the creator score. `MarketData` interface, the simulated feed, and `coinGecko.ts`: the CoinGecko candle feed with its local cache and saved windows. |
+| `src/services/evaluationSweep.ts` | Every minute: fetches the candles due theses still need, then evaluates them. |
+| `src/services/replay.ts`, `scripts/replay.ts` | The dev replay clock and what happens when it moves, and the presenter’s `npm run replay`. |
+| `demo/candles/`, `scripts/market-snapshot.ts` | Saved candle windows, loaded at startup, and `npm run snapshot`, which saves one. |
+| `scripts/testnet-pairs.ts` | `npm run testnet:pairs`: long and short pairs with a linked trade each, at live prices. |
 | `src/services/trades.ts` | Closing orders, and the one list of closing fills that every result is calculated from. |
 | `src/ledger/` | `Ledger` interface, `MockLedger` (the default) and `NearLedger` (`CONDEX_LEDGER=near`). |
 | `src/near/chain.ts`, `chainClient.ts`, `chainSender.ts` | The NEAR contract: reads (subscriptions, balances, approvals), and the outbox sender for the calls ConDex signs. |
@@ -434,6 +478,8 @@ Invalid values (a misspelt network, `CONDEX_DEV_MODE=yes`, a timeout of `5m`) st
 | `CONDEX_LLM_TIMEOUT_SECONDS` | `60` | How long to wait for the model before applying ConDex’s default expiry. |
 | `ANTHROPIC_API_KEY` | none | An alternative to the model above: lets Claude set a missing expiry. Used when `CONDEX_LLM_API_KEY` is not set. |
 | `CONDEX_EXPIRY_AI` | `llm` with a `CONDEX_LLM_API_KEY`, else `claude` with an Anthropic key, else `off` | `llm`, `claude` or `off`: which AI sets a missing expiry. With `off`, or when the AI gives no usable answer, the thesis gets ConDex’s default of 7 days. Each AI evaluation is one model call, and an account gets at most 20 an hour. |
+| `CONDEX_COINGECKO_API_KEY` | none | CoinGecko Demo API key, so theses are judged on real prices. Put it in the git-ignored `.env` file, never in the code. It is sent only as a request header. |
+| `CONDEX_MARKET_FEED` | `coingecko` with a `CONDEX_COINGECKO_API_KEY`, else `simulated` | `coingecko` or `simulated`: where the evaluation reads prices. `coingecko` without a key works from the saved windows in `demo/candles` only, which is enough for a replay. |
 | `CONDEX_NEAR_CLI` | found automatically | Path to near-cli-rs for one-click connect (an npm or pnpm `near` shim also works). The server prints at startup whether it found it. |
 
 ## Planned testnet demo

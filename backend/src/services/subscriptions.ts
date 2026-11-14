@@ -1,7 +1,8 @@
 import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
 import { ApiError } from "../errors.ts";
-import { amount, newId, nowIso, parseNear } from "../util.ts";
+// Subscriptions run on real time (systemNowIso): one bought today still unlocks reading while a past window is replayed.
+import { amount, newId, parseNear, systemNowIso } from "../util.ts";
 import { type Principal, getAccount, requireScope } from "./accounts.ts";
 
 // Reading is split like a paper behind a paywall: the abstract and the author's accuracy are public, and one
@@ -55,7 +56,7 @@ export function subscribe(ctx: Ctx, principal: Principal) {
   const { feeNear, days, treasuryAccount } = ctx.config.subscription;
   const feeYocto = parseNear(feeNear);
   return transaction(ctx.db, () => {
-    const now = nowIso();
+    const now = systemNowIso();
     const current = activeSubscription(ctx, principal.account.id, now);
     const startsAt = current ? current.ends_at : now;
     const row: SubscriptionRow = {
@@ -97,7 +98,7 @@ export function subscriptionStatus(ctx: Ctx, principal: Principal) {
  * The period covering `at`, extended by any renewals that follow it without a gap. null when the account has
  * no subscription at that time.
  */
-export function activeSubscription(ctx: Ctx, accountId: string, at: string = nowIso()): { ends_at: string } | null {
+export function activeSubscription(ctx: Ctx, accountId: string, at: string = systemNowIso()): { ends_at: string } | null {
   if (ctx.chain) {
     // What the contract said; the route asks it again first (refreshSubscription) when the answer is old.
     const account = getAccount(ctx, accountId).near_account_id;

@@ -102,6 +102,13 @@ export const simPriceBody = z.object({
   at: z.iso.datetime({ offset: true }).optional(),
 });
 
+/** Where to put the dev replay clock: a past moment, as a full ISO 8601 instant. */
+export const clockBody = z.object({
+  now: z.iso.datetime({ offset: true }),
+  /** Optional: also report this market's price at that moment. */
+  market: z.string().trim().min(1).max(40).optional(),
+});
+
 export function parse<T extends z.ZodType>(schema: T, body: unknown): z.infer<T> {
   const result = schema.safeParse(body ?? {});
   if (!result.success) {

@@ -435,6 +435,10 @@ export interface Health {
   expiry_ai: boolean;
   /** The NEAR contract, only when the backend runs on the NEAR ledger. */
   contract_id?: string;
+  /** The price feed theses are judged on: "simulated", or "feed:<name>" for real prices. */
+  market_data?: string;
+  /** "replay" while the backend's dev replay clock is set, so thesis and trade times are a past window. */
+  clock?: string;
   /** Dev mode, same machine only: the MCP server path, with the home folder shown as $HOME. */
   mcp_server?: string;
 }

@@ -147,6 +147,11 @@ export function simulateClosing(ctx: Ctx, closingId: string, type: ExecutionEven
   });
 }
 
+/** The market of the trade a closing order closes. */
+export function closingMarket(ctx: Ctx, closingId: string): string {
+  return loadOrder(ctx, loadClosing(ctx, closingId).order_id).market;
+}
+
 export function getClosingOrder(ctx: Ctx, principal: Principal, closingId: string) {
   const row = loadClosing(ctx, closingId);
   if (row.borrower_id !== principal.account.id) throw notFound("Closing order");

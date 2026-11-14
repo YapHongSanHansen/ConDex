@@ -2,7 +2,7 @@ import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
 import { badRequest, conflict, forbidden, notFound } from "../errors.ts";
 import { formatDecimal, parseDecimal } from "../quantity.ts";
-import { amount, newId, nowIso } from "../util.ts";
+import { amount, newId, nowIso, nowMs } from "../util.ts";
 import { type Principal, getAccount, requireScope } from "./accounts.ts";
 import { type Direction, type VersionRow, getVersion, isExpired } from "./insights.ts";
 import { orderHash } from "../near/chain.ts";
@@ -42,7 +42,7 @@ export function createQuote(ctx: Ctx, principal: Principal, tokenId: string) {
     token_id: tokenId,
     borrower_id: principal.account.id,
     fee_yocto: version.fee_yocto,
-    expires_at: new Date(Date.now() + ctx.config.quoteTtlSeconds * 1000).toISOString(),
+    expires_at: new Date(nowMs() + ctx.config.quoteTtlSeconds * 1000).toISOString(),
     order_id: null,
     created_at: nowIso(),
   };

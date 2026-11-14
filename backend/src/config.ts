@@ -1,4 +1,8 @@
+import { fileURLToPath } from "node:url";
 import type { KeyCheckMode } from "./near/accessKeys.ts";
+
+/** Saved candle windows that ship with the repo, so a demo replay needs no network. */
+const DEMO_SNAPSHOTS = fileURLToPath(new URL("../demo/candles", import.meta.url));
 
 export interface Config {
   port: number;
@@ -58,6 +62,15 @@ export interface Config {
   ledgerBackupReason: string | null;
   /** The contract and the two accounts ConDex signs with. null unless ledger is "near". */
   near: NearLedgerConfig | null;
+  /**
+   * Where the evaluation reads prices. "coingecko" (the default when CONDEX_COINGECKO_API_KEY is set) uses
+   * real one-minute candles; "simulated" uses prices typed in through the dev route, and is what the tests use.
+   */
+  marketFeed: "simulated" | "coingecko";
+  /** CoinGecko Demo API key. null: the CoinGecko feed can only answer from its cache and saved snapshots. */
+  coinGeckoApiKey: string | null;
+  /** A folder of saved candle windows, loaded into the CoinGecko feed's cache at startup. null: none. */
+  marketSnapshots: string | null;
 }
 
 export interface NearLedgerConfig {
@@ -136,6 +149,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const expiryAi = parseChoice(env, "CONDEX_EXPIRY_AI", ["llm", "claude", "off"] as const, llm ? "llm" : hasAnthropicKey ? "claude" : "off");
   if (expiryAi === "llm" && !llm) throw new Error("CONDEX_EXPIRY_AI=llm needs CONDEX_LLM_API_KEY");
 
+  // Real prices when CoinGecko has a key, the simulated feed when it does not. "coingecko" without a key is
+  // allowed: it then answers only from saved snapshots, which is enough to replay a saved window offline.
+  const coinGeckoApiKey = env.CONDEX_COINGECKO_API_KEY?.trim() || null;
+  const marketFeed = parseChoice(env, "CONDEX_MARKET_FEED", ["simulated", "coingecko"] as const, coinGeckoApiKey ? "coingecko" : "simulated");
+
   return {
     port,
     host: env.CONDEX_HOST?.trim() || (devMode ? "127.0.0.1" : "0.0.0.0"),
@@ -164,6 +182,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       days: parseInteger(env, "CONDEX_SUBSCRIPTION_DAYS", 30),
       treasuryAccount: env.CONDEX_TREASURY_ACCOUNT?.trim() || "condex-treasury.testnet",
     },
+    marketFeed,
+    coinGeckoApiKey,
+    marketSnapshots: marketFeed === "coingecko" && devMode ? DEMO_SNAPSHOTS : null,
   };
 }
 
