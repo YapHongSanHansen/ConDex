@@ -245,6 +245,51 @@ async fn the_chain_clock_stops_approvals_at_the_expiry() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A thesis minted with a later evaluation deadline can be evaluated only from that deadline on, by the chain's
+/// clock, even though it expired earlier.
+#[tokio::test]
+async fn the_chain_clock_waits_for_a_later_evaluation_deadline() -> anyhow::Result<()> {
+    let s = setup().await?;
+    let token = "ins_deadline-v1";
+    let now = now_ms(&s.worker).await?;
+    let (expires_at, deadline) = (now + 5_000, now + 5_000 + 300_000);
+    s.operator.call(s.contract.id(), "mint_thesis").args_json(json!({
+        "token_id": token, "owner": s.alice.id(), "payout_account": s.alice.id(), "fee": millinear(100),
+        "content_hash": "a".repeat(64), "issued_at": now, "expires_at": expires_at, "expiry_set_by": "creator",
+        "evaluation_deadline": deadline,
+    })).transact().await?.into_result()?;
+    let nft: Value = s.contract.view("nft_token").args_json(json!({ "token_id": token })).await?.json()?;
+    let extra: Value = serde_json::from_str(nft["metadata"]["extra"].as_str().unwrap())?;
+    assert_eq!(nft["metadata"]["expires_at"], expires_at);
+    assert_eq!(extra["evaluation_deadline"], deadline);
+
+    let evaluate = || {
+        s.reporter.call(s.contract.id(), "record_evaluation").args_json(json!({
+            "token_id": token, "outcome": "target_hit", "conditions_met": true, "reference_price": "3500",
+            "final_price": "3900", "entered_at": null, "target_hit_at": expires_at + 1_000, "invalidated_at": null,
+            "prices_used": 2, "source": "simulated",
+        }))
+    };
+    // Past the expiry but short of the deadline: refused.
+    while now_ms(&s.worker).await? < expires_at + 1_000 {
+        s.worker.fast_forward(10).await?;
+    }
+    let at = now_ms(&s.worker).await?;
+    println!("block time is {} ms past the expiry and {} ms before the deadline", at - expires_at, deadline as i64 - at as i64);
+    assert!(at < deadline, "the sandbox jumped past the deadline; raise it");
+    assert!(failure(evaluate().transact().await?).contains("cannot be evaluated before its deadline"));
+
+    // At the deadline: recorded, with an event time that is after the expiry.
+    while now_ms(&s.worker).await? < deadline {
+        s.worker.fast_forward(100).await?;
+    }
+    assert!(evaluate().transact().await?.into_result()?.json::<bool>()?);
+    let ev: Value = s.contract.view("get_evaluation").args_json(json!({ "token_id": token })).await?.json()?;
+    assert_eq!(ev["deadline"], deadline);
+    println!("evaluated after the later deadline: {ev}");
+    Ok(())
+}
+
 /// Redeploying the new code over the deployed one keeps every token, balance, reserve and proof, and adds the
 /// evaluation. This is what upgrading dryward2518.testnet does.
 #[tokio::test]
