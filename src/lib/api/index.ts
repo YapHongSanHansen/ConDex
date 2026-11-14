@@ -9,6 +9,6 @@ export const api: Api = { insights: insightsApi, trading: tradingApi, creators: 
 
 export * from "./types";
 export { ApiError, friendlyError, toApiError } from "./errors";
-export { getSession, setSession, type StoredSession } from "./client";
+export { getSession, setSession, subscribeSession, type StoredSession } from "./client";
 export * from "./wire";
 export { horizonOf, latestVersions, tokenToDetail, tokenToInsight } from "./adapters";

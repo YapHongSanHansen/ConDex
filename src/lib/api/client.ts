@@ -32,9 +32,18 @@ export function getSession(): StoredSession | null {
   return s && new Date(s.expiresAt).getTime() > Date.now() ? s : null;
 }
 
+const sessionListeners = new Set<() => void>();
+
+/** Lets the app follow the session: it ends on its own when the backend refuses it (a restart, a sign-out elsewhere). */
+export function subscribeSession(listener: () => void): () => void {
+  sessionListeners.add(listener);
+  return () => { sessionListeners.delete(listener); };
+}
+
 export function setSession(next: StoredSession | null) {
   session = next;
   loaded = true;
+  sessionListeners.forEach((l) => l());
   try {
     if (next) window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(next));
     else window.sessionStorage.removeItem(SESSION_KEY);

@@ -26,7 +26,7 @@ const FRIENDLY: Record<ApiErrorCode, { title: string; next: string }> = {
   insight_revoked: { title: "The creator revoked this insight.", next: "Browse the gallery for another insight." },
   not_found: { title: "We couldn't find that.", next: "It may have been removed. Go back to the gallery." },
   validation: { title: "Some details need fixing.", next: "Check the highlighted fields and try again." },
-  unauthorized: { title: "Connect your testnet wallet first.", next: "Use the Connect testnet wallet button at the top." },
+  unauthorized: { title: "Sign in to ConDex first.", next: "You are not signed in, or your session ended. Use the Sign in button." },
   contract_not_configured: { title: "The NEAR contract isn't set up yet.", next: "The backend did not say which contract to use. Check that it runs with CONDEX_LEDGER=near." },
   wallet_rejected: { title: "The wallet transaction was cancelled.", next: "Nothing was reserved or charged. You can try again." },
   server_error: { title: "Something went wrong on our side.", next: "Try again in a moment." },

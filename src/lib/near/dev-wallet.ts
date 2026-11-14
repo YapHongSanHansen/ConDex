@@ -34,7 +34,21 @@ let cached: Promise<{ signMessage: NearWalletBase["signMessage"]; signAndSendTra
 
 export function devWallet(accountId: string) {
   cached ??= (async () => {
-    const keys = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
+    // Kept for this tab, because the backend pins an account to its first key: a new key after every reload would be refused.
+    const stored = (() => { try { return window.sessionStorage.getItem(`condex.devkey.${accountId}`); } catch { return null; } })();
+    let keys: CryptoKeyPair;
+    if (stored) {
+      const { priv, pub } = JSON.parse(stored) as { priv: JsonWebKey; pub: JsonWebKey };
+      keys = {
+        privateKey: await crypto.subtle.importKey("jwk", priv, { name: "Ed25519" }, true, ["sign"]),
+        publicKey: await crypto.subtle.importKey("jwk", pub, { name: "Ed25519" }, true, ["verify"]),
+      };
+    } else {
+      keys = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
+      try {
+        window.sessionStorage.setItem(`condex.devkey.${accountId}`, JSON.stringify({ priv: await crypto.subtle.exportKey("jwk", keys.privateKey), pub: await crypto.subtle.exportKey("jwk", keys.publicKey) }));
+      } catch { /* storage blocked: the key lasts until reload */ }
+    }
     const publicKey = `ed25519:${base58(new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)))}`;
     return {
       signMessage: async ({ message, nonce, recipient }: { message: string; nonce: Uint8Array; recipient: string }) => {

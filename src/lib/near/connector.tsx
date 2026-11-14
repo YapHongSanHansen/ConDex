@@ -1,9 +1,9 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { NearConnector, NearWalletBase } from "@hot-labs/near-connect";
 import { toast } from "sonner";
-import { friendlyError, toApiError } from "@/lib/api";
+import { friendlyError, getSession, subscribeSession, toApiError } from "@/lib/api";
 import { DEV_WALLET, NEAR_NETWORK } from "@/lib/config";
 import { devWallet } from "./dev-wallet";
 import { sessionFor, signInToBackend, signOutOfBackend } from "./session";
@@ -30,19 +30,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [accountId, setAccountId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
+  // Signed in means the stored session belongs to the connected wallet. It follows the session itself, so when the backend
+  // refuses it (after a restart, say) the page goes back to asking for a sign-in instead of showing errors.
+  const session = useSyncExternalStore(subscribeSession, getSession, () => null);
+  const signedIn = !!accountId && session?.accountId === accountId;
   const [signingIn, setSigningIn] = useState(false);
 
   const doSignIn = useCallback(async (id: string) => {
     setSigningIn(true);
     try {
       const wallet = DEV_WALLET ? await devWallet(id) : (await connectorRef.current?.wallet().catch(() => null)) ?? null;
-      await signInToBackend(wallet, id);
-      setSignedIn(true);
-      toast.success("Signed in to ConDex");
-    } catch (err) {
-      setSignedIn(false);
-      const f = friendlyError(toApiError(err));
+      await signInToBackend(wallet, id);toast.success("Signed in to ConDex");
+    } catch (err) {const f = friendlyError(toApiError(err));
       toast.error(err instanceof Error && !err.name.includes("ApiError") ? `Couldn't sign in: ${err.message}` : f.title);
     } finally {
       setSigningIn(false);
@@ -53,7 +52,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     if (DEV_WALLET) {
       // The development stand-in wallet: connected from the start, with a session from earlier in this tab if there is one.
-      queueMicrotask(() => { setAccountId(DEV_WALLET); setSignedIn(!!sessionFor(DEV_WALLET)); setReady(true); });
+      queueMicrotask(() => { setAccountId(DEV_WALLET); setReady(true); });
       return;
     }
     (async () => {
@@ -66,16 +65,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       connector.on("wallet:signIn", (e) => {
         // VERIFIED in the library README: account id lives at accounts[0].accountId
         const id = e.accounts[0]?.accountId ?? null;
-        setAccountId(id);
-        setSignedIn(!!sessionFor(id));
-        if (id) toast.success(`Wallet connected: ${id}`);
+        setAccountId(id);if (id) toast.success(`Wallet connected: ${id}`);
         // Connecting is followed straight away by signing ConDex's challenge, so one click gives a working session.
         if (id && !sessionFor(id)) void doSignIn(id);
       });
       connector.on("wallet:signOut", () => {
-        setAccountId(null);
-        setSignedIn(false);
-        void signOutOfBackend();
+        setAccountId(null);void signOutOfBackend();
         toast("Wallet disconnected");
       });
 
@@ -84,7 +79,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const id = existing.accounts[0]?.accountId ?? null;
         if (!cancelled) {
           setAccountId(id);
-          setSignedIn(!!sessionFor(id)); // a session from earlier in this tab, if it is still valid
         }
       } catch {
         /* not signed in yet */
@@ -98,7 +92,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [doSignIn]);
 
   const connect = useCallback(async () => {
-    if (DEV_WALLET) { setAccountId(DEV_WALLET); setSignedIn(!!sessionFor(DEV_WALLET)); if (!sessionFor(DEV_WALLET)) void doSignIn(DEV_WALLET); return; }
+    if (DEV_WALLET) { setAccountId(DEV_WALLET); if (!sessionFor(DEV_WALLET)) void doSignIn(DEV_WALLET); return; }
     const c = connectorRef.current;
     if (!c) return;
     setConnecting(true);
@@ -113,9 +107,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const disconnect = useCallback(async () => {
     if (DEV_WALLET) {
-      // The stand-in wallet has no connector: signing out just ends the ConDex session.
-      setSignedIn(false);
-      void signOutOfBackend();
+      // The stand-in wallet has no connector: signing out just ends the ConDex session.void signOutOfBackend();
       return;
     }
     const c = connectorRef.current;
@@ -124,9 +116,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const wallet = await c.wallet();
       await c.disconnect(wallet);
     } catch {
-      setAccountId(null);
-      setSignedIn(false);
-      void signOutOfBackend();
+      setAccountId(null);void signOutOfBackend();
     }
   }, []);
 
