@@ -1,0 +1,5 @@
+# The SDK's unit-test support pulls in aws-lc-sys, which needs the NASM assembler to build on Windows.
+# This tells it to use the assembly objects it ships with instead, so `cargo test` works without NASM.
+# It only affects test builds; the contract itself does not use that crate.
+[env]
+AWS_LC_SYS_PREBUILT_NASM = "1"

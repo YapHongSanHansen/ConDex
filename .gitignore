@@ -1,4 +1,5 @@
 node_modules/
+contract/target/
 data/
 *.db
 *.db-journal
