@@ -2,9 +2,9 @@
 
 **ConDex is a proof-backed intelligence marketplace for traders and their AI agents.** A trader selects the messages from a conversation with their agent and states the conditions of the idea, including when it expires. Their agent uploads them through MCP or the ConDex API. ConDex mints one NFT on NEAR for that exact version. The NFT records the thesis and, as people trade on it, its verified results.
 
-Other agents can use the token ID to read the thesis for free. A borrower pays a usage fee only when a trade they linked to that NFT receives a confirmed fill, and the fee goes to the creator. Each filled trade is recorded on the NFT as a proof of trade, and the creator’s score is calculated from those proofs alone.
+Other agents can use the token ID to read the thesis for free. A borrower pays a usage fee only when a trade they linked to that NFT receives a confirmed fill, and the fee goes to the creator. Each filled trade is recorded on the NFT as a proof of trade, and the creator’s score is calculated from those proofs and from ConDex’s own evaluation of each thesis against market data. Nothing in it is reported by the creator.
 
-> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing, free reading and paying the creator per filled trade work today. Required expiry, recorded thesis conditions, trade matching, verified results, the creator score, the NEAR testnet contract and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
+> **Build status** — NEAR Hackathon project. The off-chain services (API, MCP server, private storage, simulated execution venue) run locally against a **mock ledger** that stands in for the NEAR contract. Publishing with conditions and an expiry, free reading, matching a trade to its thesis, a public proof of thesis and trade, paying the creator per filled trade, closing a trade, evaluating a thesis against a simulated market data feed, verified results and the creator score work today. The creator’s own track record, a live market data feed, the NEAR testnet contract and the product frontend are not built yet. [What the prototype does today](#what-the-prototype-does-today) compares each rule below with the code.
 
 ## The problem
 
@@ -19,7 +19,8 @@ ConDex lets the creator share selected reasoning with explicit conditions and an
 3. **Borrow and read for free.** Another user’s agent calls the thesis by token ID using its own scoped credential. It can read the reasoning, check whether the conditions still apply, and decide to walk away. Reading, repeated calls, and expiry incur zero ConDex fees.
 4. **Authorise a linked trade.** If the borrower acts on the thesis, their wallet or authorised trading agent approves an order from their own account. ConDex binds the thesis version and fee quote to the order before submission, and accepts the link only if the order matches the thesis: the same market and direction, before the expiry. The borrower sees the fee and authorises its reservation. A key that reads research cannot sign trades.
 5. **Pay on confirmed execution.** ConDex checks the execution record for that exact order. Its first confirmed fill, including a partial fill, triggers one creator payout on NEAR and one proof of trade, recorded on the thesis NFT. Later fills and retries for the same order use the same receipt. A rejected order or an order confirmed cancelled or expired with no fills releases the reserve. While the outcome is unknown, settlement stays pending.
-6. **Score the result.** When the trade is closed, its closing fill is added to the proof of trade. The NFT’s verified results and the creator’s score are recalculated.
+6. **Record the close.** When the execution route reports that the trade was closed, the closing fill is added to the proof of trade and the result of the trade is calculated. The NFT’s verified results and the creator’s score are recalculated.
+7. **Evaluate the thesis.** After the expiry, ConDex compares the thesis with market data and records, once, whether its conditions were met. That outcome counts in the creator’s accuracy.
 
 For example, Alice publishes an ETH thesis: short ETH-USD on a 15-minute close back below yesterday’s high, invalid on a 1-hour close above the sweep high, expiring at 14:30 UTC on 14 November (the US market open), with a usage fee of 0.1 test NEAR per filled trade. Bob’s agent reads it three times for free. If Bob cancels his linked order before any fill, he pays Alice zero. If part of that order fills before cancellation, Alice earns 0.1 test NEAR, even if Bob later closes the trade at a loss. That loss is then recorded on the NFT and counts in the borrowers’ track record of Alice’s score. After 14:30 UTC on 14 November, nobody can link a new trade to this thesis.
 
@@ -34,6 +35,7 @@ A thesis is the published conversation plus its conditions. The conditions are s
 | Entry | When to enter, in the creator’s words. |
 | Invalidation | What would prove the idea wrong, in the creator’s words. |
 | Exit or target | Optional. When to take profit or close. |
+| Price levels | Optional. The entry, invalidation and target as prices, so ConDex can [evaluate the thesis](#thesis-evaluation) against market data after the expiry. |
 | Expiry date | The last day a trade can be linked to the thesis. Every thesis has one. |
 | Expiry time | The time on that day, in UTC, when the thesis depends on one. |
 
@@ -83,7 +85,7 @@ Recorded on the thesis NFT when a real trade linked to it receives its first con
 
 ### Verified results
 
-From its closed trades, each thesis NFT shows the verified result of that thesis alone: the number of trades, net return, net profit % and maximum drawdown %. They are calculated the same way as the [creator score](#creator-score). Nobody can enter a result by hand: every figure comes from a proof of trade.
+From its closed trades, each thesis NFT shows the verified result of that thesis alone: the number of closed trades, net return %, net profit in US dollars and maximum drawdown %. They are calculated the same way as the [creator score](#creator-score). Nobody can enter a result by hand: every figure comes from a proof of trade.
 
 ### Matching a thesis to a real trade
 
@@ -95,9 +97,18 @@ A trade counts as a trade of the thesis only when all of these hold:
 4. It was authorised before the thesis expired.
 5. A connected execution route confirms that it was filled.
 
-ConDex refuses to link an order that fails checks 2 to 4. The entry and invalidation conditions are in the creator’s own words, so ConDex does not judge them automatically. The proof of trade shows the real fill price and time beside them for anyone to compare.
+ConDex refuses to link an order that fails checks 2 to 4. The entry and invalidation conditions are in the creator’s own words, so ConDex does not use them to accept or refuse a trade. The proof of trade shows the real fill price and time beside them for anyone to compare. Whether the thesis itself turned out right is judged separately, after the expiry: see [Thesis evaluation](#thesis-evaluation).
 
 A trade submitted independently outside a connected execution route has no reliable link to the thesis. ConDex can prove, charge for and score only a trade whose link and execution it can verify.
+
+### Closing a trade
+
+A trade is closed when the connected execution route reports a close for the order that opened it, with the quantity closed and the price. The trader does nothing in ConDex. Each close is a closing fill on the proof of trade.
+
+- A trade can be closed in parts. It counts as closed when everything that was filled has been closed and no more of the opening order can fill.
+- A close pays nothing and charges nothing. The usage fee was settled on the first fill.
+- A trade can be closed after the thesis has expired.
+- Once the trade is closed, its result is calculated from the average price of its opening fills and the average price of its closing fills.
 
 ## Pay per filled trade
 
@@ -122,14 +133,44 @@ A thesis can expire while its proof remains. The two are defined separately:
 | New fee quotes and linked trades | Refused. |
 | Usage fees | Paid only for orders that were authorised before the expiry and fill later. No other fee can arise, so the creator’s fee income from this thesis ends. |
 | Results | A trade opened before the expiry still records its result when it closes, and still counts in the verified results and the scores. |
+| Evaluation | ConDex judges the thesis against market data, once. |
 
 ### Not in this version
 
 The thesis NFT is not a fractional or transferable revenue-sharing token. Splitting or selling the right to a thesis’s fees among other holders, for example with NEP-141 tokens, is a possible later version. Nothing above depends on it.
 
+## Thesis evaluation
+
+After a thesis expires, ConDex judges it against market data and records whether its conditions were met. The creator does not report this and cannot change it.
+
+- **When.** Once, after the expiry. Until then the evaluation is pending, because the price can still reach any level.
+- **Against what.** The market’s prices from the moment of publishing up to the expiry, from a connected market data feed. The evaluation names the feed it used.
+- **With what.** The thesis’s price levels. A thesis counts as entered when the price reaches its entry price, or at publishing when it has no entry price or the price is already past it. The invalidation price counts from publishing. The target price counts only once the thesis is entered.
+- **Fixed once recorded.** A later price cannot change the outcome.
+
+| Outcome | When | Conditions met |
+| --- | --- | --- |
+| Target hit | The target price was reached before the invalidation price. | Yes |
+| In direction | No target price was set, and at the expiry the price had moved in the thesis’s direction since it was entered. | Yes |
+| Invalidated | The invalidation price was reached first. | No |
+| Target missed | The thesis was entered, but the target price was not reached by the expiry. | No |
+| Against direction | No target price was set, and at the expiry the price had not moved in the thesis’s direction. | No |
+| Not triggered | The entry price was never reached. | Not judged |
+| Already reached | The price was already past the target or the invalidation when the thesis was published. | Not judged |
+| No data | The feed had no price for the market. | Not judged |
+
+A thesis with no price levels is judged on its direction alone, by comparing the price at the expiry with the price at publishing.
+
+The evaluation is public. It shows the outcome, the market price at publishing and at the expiry, and when each level was reached. It does not show the creator’s price levels, which stay with the conditions.
+
 ## Creator score
 
-Every creator has a public score. It is calculated only from proofs of trade, so it reflects real, verified trades and nothing the creator reports about themselves. It is recalculated each time a matched trade is closed.
+Every creator has a public score. It has two parts, and the creator reports neither of them:
+
+- **Accuracy** comes from [thesis evaluation](#thesis-evaluation): of the creator’s theses that were judged, the share whose conditions were met. Theses still waiting for their expiry, and theses that could not be judged, are counted separately.
+- **Track records** come from proofs of trade: what real, verified trades of the creator’s theses returned.
+
+There is no reputation figure and no result entered by hand.
 
 The score keeps two track records and never merges them:
 
@@ -142,13 +183,15 @@ Each track record reports three figures over its closed trades, with the number 
 
 | Figure | How it is calculated |
 | --- | --- |
-| Net return | Total profit minus total loss, after trading costs and ConDex fees, in US dollars. |
-| Net profit % | Each trade’s net result as a percentage of its entry value, added up. This is the result of putting the same amount into every trade, so one large trade cannot dominate. |
-| Maximum drawdown % | The largest fall from a high point of that running total, taking the trades in the order they closed. |
+| Net return % | Each trade’s result as a percentage of its entry value, added up. This is the result of putting the same amount into every trade, so one large trade cannot dominate. |
+| Net profit ($) | Total profit minus total loss, in US dollars. |
+| Maximum drawdown % | The largest fall of the running net return % from its highest point, taking the trades in the order they closed. |
 
-For example, four closed trades returning +5%, −3%, −4% and +10% give a net profit of +8%. The running total peaked at +5% and fell to −2%, so the maximum drawdown is 7%.
+For example, four closed trades returning +5%, −3%, −4% and +10% give a net return of +8%. The running total peaked at +5% and fell to −2%, so the maximum drawdown is 7%.
 
-A trade that is still open is listed but not counted until it closes.
+A trade that is still open, or only partly closed, is listed but not counted until it is fully closed.
+
+The figures are before trading costs. The usage fee is paid in NEAR, so it is shown on each proof of trade and not taken off the dollar figures.
 
 ## Where NEAR fits
 
@@ -156,10 +199,11 @@ A trade that is still open is listed but not counted until it closes.
 | --- | --- |
 | MCP server and API | Accept authorised uploads from creators’ agents, remind them to set the expiry, issue scoped access, and serve theses by token ID. |
 | NEAR contract | Mint one NFT (NEP-171) per thesis version, record each proof of trade on it, hold its revenue split, reserve authorised fees, and pay each collected fee according to the split. |
-| Execution integration | Submit or track the authorised order, and verify its fill and its close. The prototype trusts this service to report the execution accurately. |
+| Execution integration | Submit or track the authorised order, and report its fills and its close. The prototype trusts this service to report the execution accurately. |
 | Private storage | Store the approved messages and thesis conditions off-chain. Only their fingerprint goes on NEAR. |
 | ConDex AI | Set the expiry date when the creator gives none, and record why. |
-| Score service | Calculate each NFT’s verified results and each creator’s score from the proofs of trade. |
+| Market data feed | Supply the prices each thesis is evaluated against after its expiry. |
+| Score service | Evaluate each thesis against market data after its expiry, and calculate each NFT’s verified results and each creator’s score. |
 
 ## What the prototype does today
 
@@ -167,22 +211,22 @@ The API and code call a thesis an *insight*, and its fingerprint a `content_hash
 
 | Rule | In the prototype today |
 | --- | --- |
-| Expiry date required, with a reminder | Not built. The expiry is optional. |
-| ConDex’s AI sets a missing expiry | Not built. A thesis published without an expiry never expires. |
+| Expiry date required, with a reminder | Built. Every version has an expiry: the creator’s `expiry_date` and optional `expiry_time` (or a full ISO `expires_at`), or one that ConDex sets. A past or malformed expiry is refused. The MCP publish tool tells the creator’s agent to ask for the date and time, and the publish response says when ConDex had to set it. |
+| ConDex’s AI sets a missing expiry | Built, and off until the server has a key for a model. With `CONDEX_LLM_API_KEY`, an OpenAI-compatible reasoning model (Qwen on Grafilab by default) reads the thesis; with `ANTHROPIC_API_KEY`, Claude does. The AI takes the expiry from the deadline or event the thesis describes, at most 30 days out. The proof of thesis says `set_by: "condex_ai"` with the reason, and both are part of the content hash. With no model, or no usable answer, ConDex applies a default of 7 days and records `set_by: "condex_default"`, so nothing is published without an expiry. Both models are tested against stand-ins. The Claude path has not been run against the live API yet. |
 | Expiry stops new trades | Built. After the expiry, fee quotes and linked orders are refused, and reading still works. |
-| Thesis conditions as fields | Partly. The market, title, summary and messages are recorded. Direction, entry, invalidation and target are not separate fields. |
-| Thesis NFT | Partly. Each version gets a token record with a fingerprint, creator, payout account and fee, on the mock ledger. It is not yet an NEP-171 NFT on NEAR, and the expiry is covered by the fingerprint but is not a field of its own. |
-| Original conditions preserved | Built. A published version cannot be edited. A change is a new version with a new token. |
-| Proof of trade on the NFT | Partly. ConDex keeps a receipt that links the borrower, thesis version, order and first fill, with the source of the evidence. Only the fee payment is written to the mock ledger. There is no closing fill. |
-| Verified results | Not built. |
-| Matching | Partly. The link is made before submission and the expiry is checked. Market and direction are not checked. |
+| Thesis conditions as fields | Built. Market, direction, entry and invalidation are required fields, and the target is optional. The market and direction are public. The entry, invalidation and target are served with the conversation. Optional price levels (`entry_price`, `invalidation_price`, `target_price`) are checked against the direction, covered by the fingerprint and served with the conversation. |
+| Thesis NFT | Partly. Each version gets a token record on the mock ledger with a fingerprint, creator, payout account, fee, publish time, expiry and who set the expiry. It is not yet an NEP-171 NFT on NEAR. |
+| Original conditions preserved | Built. A published version cannot be edited. Its fingerprint covers the conditions and the expiry, a reader can recompute it, and every read re-checks the stored content against the minted hash (`integrity.matches`). A change is a new version with a new token. |
+| Proof of thesis | Built, against the mock ledger. `GET /v1/tokens/:id/proof` is public and shows the creator, publish time, expiry and who set it, fingerprint, fee, mint transaction and whether the thesis is still `preserved`. It never includes the conversation or the creator’s entry, invalidation and target. |
+| Proof of trade on the NFT | Built, against the mock ledger. The same endpoint lists each proof of trade: trader, role, the order, the first fill (time, price, quantity, evidence source), the fee paid and the settlement transaction. A trade is closed by a `close` execution event on its order, with a quantity and a price (see [Closing a trade and reading the results](#closing-a-trade-and-reading-the-results)). The proof then shows `closing_fill`: the average closing price, the quantity closed, and `complete` once the whole trade is closed. A fully closed trade has a `result`: entry and exit price, entry value, net profit in dollars and net return %. A trader can also close with a closing order, `POST /v1/orders/:orderId/close` (MCP: `condex_close_trade`), on the opposite side with no fee. Its confirmed fills count as closing fills in the same way, and `trade` shows the status (`open`, `partially_closed` or `closed`), each closing fill and a running result. Each result is in the market's quote currency and excludes the NEAR usage fee. Only the fee payment is written to the mock ledger, so the closing fill is not yet on NEAR. |
+| Thesis evaluation | Built, against a simulated market data feed. Prices are recorded with `POST /v1/sim/market/:market/prices` in dev mode, and there is no live feed yet. Before the expiry the proof endpoint shows `evaluation.status: "pending"`. The first request for the proof or the publisher page after the expiry evaluates the thesis and stores the outcome, which is never changed. One `expires_at` is both the last moment to link a trade and the evaluation deadline. The evaluation is stored off-chain only. |
+| Verified results | Built. `verified_results` on the proof endpoint gives the number of fully closed trades, net return %, net profit in dollars and maximum drawdown % for that thesis, before trading costs. They are calculated on each request and are not written to the mock ledger. |
+| Matching | Built for checks 1 to 4. An order in another market, against the thesis’s direction or after the expiry is refused before any fee is reserved, and each linked order records what was checked. Check 5 uses the simulated venue or the execution endpoint. |
 | Pay per filled trade, to the creator | Built, against the mock ledger. The whole fee goes to the payout account named at publishing. |
 | Creator’s own trades | Not built. A creator cannot link an order to their own thesis. |
-| Creator score | Not built. The creator’s public page shows counts only: theses, reads, paid orders and fees paid. |
+| Creator score | Partly. The publisher page (`GET /v1/publishers/:account`) shows `score.accuracy`: theses judged, conditions met, accuracy %, pending and not judged. It also shows `score.borrowers`, the track record of borrowers’ trades: closed trades, net return %, net profit in dollars and maximum drawdown %. The creator’s own track record is not built, because a creator cannot link an order to their own thesis. |
 
 ## Running the off-chain services
-
-The code for these services is on the [`backend`](https://github.com/YapHongSanHansen/ConDex/tree/backend) branch. Switch to it before running the commands below.
 
 Requires Node.js 24 or later (it runs TypeScript directly). There is no database to install or set up.
 
@@ -195,9 +239,11 @@ npm run test:page    # opens the test console in headless Chrome/Edge and checks
 npm run typecheck
 ```
 
+`npm start` and `npm run dev` read a git-ignored `.env` file if there is one, for settings such as `CONDEX_LLM_API_KEY`.
+
 **Data lives in memory.** Nothing is written to disk, and everything (sign-ins, API keys, published insights, orders, mock balances) starts empty whenever the server restarts, including each automatic restart of `npm run dev`. After a restart, reconnect your wallet (one click) and create a new MCP key; the test console notices the ended session and says so, and **Run every button** sets the test data up again. To keep data between restarts instead, set `CONDEX_DB_PATH=data/condex.db` (a local SQLite file, built into Node).
 
-The test console has a button for every API action and every demo checklist item. **Run every button** resets the data, clicks each one in order and reports pass or fail.
+The test console has a button for most API actions and demo checklist items. It has none yet for recording market prices or reporting a close event; `npm test` covers those. **Run every button** resets the data, clicks each one in order and reports pass or fail.
 
 ### Connect wallet (top right of the test console)
 
@@ -220,7 +266,7 @@ Dev mode is for your own machine, so it is locked to it:
 
 | | No wallet | Wallet connected |
 | --- | --- | --- |
-| Publisher pages (`GET /v1/publishers/:account`), insight list and previews | ✅ | ✅ |
+| Publisher pages (`GET /v1/publishers/:account`), insight list and previews, proof of thesis and trade (`GET /v1/tokens/:id/proof`) | ✅ | ✅ |
 | Ledger explorer (`/v1/ledger/*`): the same data that will be public on NEAR | ✅ | ✅ |
 | Read conversations, publish, trade, deposit | 401 | ✅ with the session or an API key it issued |
 | Receipts | 401 | ✅ the borrower's and creator's own |
@@ -235,6 +281,63 @@ Connecting a wallet uses NEP-413 message signing; it sends no transaction:
 Challenges last `CONDEX_CHALLENGE_TTL_SECONDS` (5 minutes by default). Anyone can request one, so each client address may request `CONDEX_SIGNINS_PER_MINUTE` (60) a minute and hold at most 20 unfinished ones, and at most 10,000 can be unfinished in total. Expired challenges and sessions are deleted. A temporary NEAR RPC problem returns a retryable 502, not "this is not your key".
 
 API keys (`cdx_…`) issued from a session keep working after sign-out until they are revoked, so a running agent is not cut off when the website tab closes. Sessions and keys remember whether the sign-in was checked on NEAR; a server running with `near-rpc` refuses ones made while the check was off.
+
+### Publishing a thesis and linking a trade
+
+`POST /v1/insights` publishes a thesis, and `POST /v1/insights/:insightId/versions` publishes a new version of one. Both take:
+
+| Field | Meaning |
+| --- | --- |
+| `title`, `summary` | The public title, and optional public preview text. |
+| `market` | Required. What is traded, for example `ETH-USD`. Public. |
+| `direction` | Required. `long` or `short`. Public. |
+| `entry`, `invalidation` | Required, in the creator's words. Served with the conversation, not in the public preview. |
+| `target` | Optional. When to take profit or close. |
+| `entry_price`, `invalidation_price`, `target_price` | Optional. The same conditions as prices, so ConDex can evaluate the thesis after the expiry. For a long thesis the invalidation must be below the entry and the target above it, and the other way round for a short one; otherwise publishing is refused with `levels_inconsistent`. |
+| `expiry_date` | `YYYY-MM-DD`, in UTC. Leave it out and ConDex sets the expiry. |
+| `expiry_time` | Optional `HH:MM`, in UTC. Without it the thesis expires at 23:59:59 UTC on the expiry date. |
+| `expires_at` | Instead of the two fields above: a full ISO date-time such as `2026-12-31T13:30:00Z`. |
+| `fee_near`, `payout_account` | The fee per filled order, and the account that receives it (the creator's by default). |
+| `messages` | The approved messages. |
+
+In the response, `expires_at` is the expiry and `expiry.set_by` says who set it: `creator`, `condex_ai` or `condex_default`. When ConDex set it, `expiry.reason` says why and `notice` is a sentence to pass on to the creator. Conditions and expiry are fixed once published; changing them means publishing a version.
+
+Reading a thesis (`GET /v1/tokens/:tokenId`) also returns `integrity`: whether the stored conditions, expiry and messages still hash to the minted fingerprint. `GET /v1/tokens/:tokenId/proof` is public and needs no wallet: it returns the proof of thesis, and a proof of trade for each linked order that got a confirmed fill.
+
+`POST /v1/orders` links an order to a thesis only when it matches. A mismatch is refused with HTTP 409 before any fee is reserved, and the quote can be used again:
+
+| Error code | When |
+| --- | --- |
+| `market_mismatch` | The order names a market other than the thesis's. Leave `market` out to use the thesis's. |
+| `direction_mismatch` | The order does not open in the thesis's direction: `buy` for a long thesis, `sell` for a short one. |
+| `insight_expired` | The thesis has expired. `POST /v1/quotes` is refused the same way. |
+
+A linked order's `thesis_match` records what was checked: the thesis version and its fingerprint, the market, the direction and opening side, and the authorisation time against the expiry.
+
+### Closing a trade and reading the results
+
+A trade is closed by a `close` execution event on the order that opened it. The execution integration sends it to `POST /v1/execution/events` with the `x-execution-secret` header:
+
+| Field | Meaning |
+| --- | --- |
+| `event_id` | The integration’s own id for the event. Sending the same id again is a replay and changes nothing. |
+| `order_id` | The order that opened the trade. |
+| `type` | `close`. |
+| `quantity`, `price` | Required. How much was closed, and at what price. |
+| `source` | `simulated`, or `venue:<name>` for a live venue. |
+
+In dev mode, `POST /v1/sim/orders/:orderId/close` with a `price` does the same on the simulated venue. Without a `quantity` it closes everything still open.
+
+| Error code | When |
+| --- | --- |
+| `nothing_to_close` | The order has no fills, or the trade is already fully closed. |
+| `overclose` | The quantity is more than what is still open. |
+| `close_needs_fill` | The event has no quantity or no price. |
+| `closing_in_progress` | A closing order for this trade is still waiting for fills. |
+
+`GET /v1/tokens/:tokenId/proof` returns the outcome. Besides the proof of thesis it holds `evaluation` (pending, or the outcome once the thesis has expired), each proof of trade with its `closing_fill` and `result`, and `verified_results` for the thesis. `GET /v1/publishers/:account` returns the creator’s `score`: `accuracy` and the `borrowers` track record. Both are public.
+
+In dev mode, `POST /v1/sim/market/:market/prices` with a `price` and an optional `at` records a price on the simulated market data feed.
 
 ### Connecting an agent over MCP
 
@@ -256,9 +359,12 @@ The MCP tools have exactly the scopes of that key: `publish`, `read` and/or `tra
 | `src/api/app.ts` | HTTP routes. Request bodies are validated in `src/api/schemas.ts`. |
 | `src/services/auth.ts`, `src/near/` | Wallet sign-in: NEP-413 challenge and verification, on-chain access-key check, sessions. |
 | `src/services/accounts.ts` | Authentication and API keys scoped to `publish`, `read` and `trade`. Keys and sessions are stored hashed. |
-| `src/services/insights.ts` | Publishing versions, content hashing, minting, public previews and free reads. |
-| `src/services/orders.ts` | Fee quotes, fee reservation and order submission. |
-| `src/services/settlement.ts` | Execution events → one payout on the first fill, release on no-fill endings, idempotent replays. |
+| `src/services/insights.ts` | Publishing versions with their conditions, content hashing, minting, public previews and free reads. |
+| `src/services/expiry.ts`, `src/ai/` | The expiry of a version: the creator’s own, or ConDex’s AI (`llmExpiry.ts` for an OpenAI-compatible model, `claudeExpiry.ts` for Claude), or ConDex’s default. |
+| `src/services/orders.ts` | Fee quotes, matching an order to its thesis, fee reservation and order submission. |
+| `src/services/settlement.ts` | Execution events → one payout on the first fill, release on no-fill endings, close events, idempotent replays. |
+| `src/services/evaluation.ts`, `src/market/` | Evaluating a thesis against market data after its expiry, the result of each closed trade, verified results and the creator score. `MarketData` interface and the simulated feed. |
+| `src/services/trades.ts` | Closing orders, and the one list of closing fills that every result is calculated from. |
 | `src/ledger/` | `Ledger` interface and `MockLedger`. A NEAR testnet adapter replaces the mock. |
 | `src/execution/venue.ts` | `ExecutionVenue` interface and the simulated venue. |
 | `src/mcp/server.ts` | MCP server (stdio) for creators' and borrowers' agents. |
@@ -285,16 +391,24 @@ Invalid values (a misspelt network, `CONDEX_DEV_MODE=yes`, a timeout of `5m`) st
 | `CONDEX_SIGNINS_PER_MINUTE` | `60` | New sign-in challenges per client address per minute. |
 | `CONDEX_TRUST_PROXY` | `0` | Number of reverse proxies in front of the server, so the client address (for sign-in limits) comes from `X-Forwarded-For`. |
 | `CONDEX_QUOTE_TTL_SECONDS` | `300` | How long a fee quote stays valid. |
+| `CONDEX_LLM_API_KEY` | none | Key for the OpenAI-compatible reasoning model that sets a missing expiry. Put it in a git-ignored `.env` file (`npm start` and `npm run dev` read it), never in the code. |
+| `CONDEX_LLM_BASE_URL` | `https://llm.grafilab.ai/v1` | Any OpenAI-compatible endpoint. |
+| `CONDEX_LLM_MODEL` | `qwen/qwen3.7-flash` | Model used for the expiry. |
+| `CONDEX_LLM_REASONING_EFFORT` | `low` | `low`, `medium` or `high`. |
+| `CONDEX_LLM_TIMEOUT_SECONDS` | `60` | How long to wait for the model before applying ConDex’s default expiry. |
+| `ANTHROPIC_API_KEY` | none | An alternative to the model above: lets Claude set a missing expiry. Used when `CONDEX_LLM_API_KEY` is not set. |
+| `CONDEX_EXPIRY_AI` | `llm` with a `CONDEX_LLM_API_KEY`, else `claude` with an Anthropic key, else `off` | `llm`, `claude` or `off`: which AI sets a missing expiry. With `off`, or when the AI gives no usable answer, the thesis gets ConDex’s default of 7 days. Each AI evaluation is one model call, and an account gets at most 20 an hour. |
 | `CONDEX_NEAR_CLI` | found automatically | Path to near-cli-rs for one-click connect (an npm or pnpm `near` shim also works). The server prints at startup whether it found it. |
 
 ## Planned testnet demo
 
 - [ ] Publish a selected conversation with its conditions and expiry from an agent, and mint its thesis NFT on NEAR testnet.
-- [ ] Publish a thesis without an expiry date and show ConDex’s AI setting one, marked as set by ConDex.
+- [x] Publish a thesis without an expiry date and show ConDex’s AI setting one, marked as set by ConDex. (Works against the mock ledger.)
 - [ ] Retrieve the thesis twice with a borrower credential and show zero charges.
 - [ ] Show that an order in the wrong market or direction, or placed after the expiry, cannot be linked.
 - [ ] Demonstrate a cancelled, unfilled order and release the reserved fee.
 - [ ] Demonstrate a linked fill, replay its confirmation, and show a single creator payout and a single proof of trade on NEAR testnet.
 - [ ] Close a trade and show the NFT’s verified results and the creator’s score change.
 - [ ] Let a thesis expire and show that its NFT and trade record remain while new trades are refused.
+- [ ] After the expiry, show ConDex’s evaluation of the thesis against market data and the creator’s accuracy.
 - [ ] Label the source of execution evidence in the demo so viewers can distinguish a simulated fill from a live venue confirmation.
