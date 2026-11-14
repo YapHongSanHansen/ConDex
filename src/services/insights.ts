@@ -164,6 +164,26 @@ export function publisherProfile(ctx: Ctx, nearAccountId: string) {
 }
 
 /**
+ * The public figures on the home page: theses that can still be traded, orders linked to a thesis in the last 24
+ * hours, and the fees that were paid to creators. Each is a count or a sum, so nothing private is in it.
+ */
+export function platformStats(ctx: Ctx) {
+  const now = nowIso();
+  const { n: live } = ctx.db.prepare(
+    `SELECT COUNT(*) AS n FROM insight_versions v
+      WHERE v.expires_at > ? AND v.version = (SELECT MAX(version) FROM insight_versions WHERE insight_id = v.insight_id)`,
+  ).get(now) as { n: number };
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  const { n: orders } = ctx.db.prepare("SELECT COUNT(*) AS n FROM orders WHERE created_at >= ?").get(since) as { n: number };
+  const fees = ctx.db.prepare("SELECT fee_yocto FROM receipts").all() as Array<{ fee_yocto: string }>;
+  return {
+    insights_live: live,
+    trades_linked_24h: orders,
+    fees_paid_to_creators: amount(fees.reduce((sum, r) => sum + BigInt(r.fee_yocto), 0n)),
+  };
+}
+
+/**
  * Serves the approved conversation with its conditions. It needs an active subscription, except for the
  * thesis's own creator; the abstract (previewView) is free. Each read is logged with a zero charge, because
  * the subscription already covers it, including reads after the expiry.

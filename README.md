@@ -319,6 +319,7 @@ In the response, `expires_at` is the expiry and `expiry.set_by` says who set it:
 | --- | --- | --- |
 | `GET /v1/tokens`, `GET /v1/tokens/:tokenId/preview` | Anyone | The abstract: title, summary, market, direction, expiry, `fee_per_filled_order`, `author_score` (`accuracy` and the `borrowers` track record) and `unlock` (the subscription's `fee`, `period_days` and `paid_to`). No conditions or messages. |
 | `GET /v1/publishers/:nearAccountId` | Anyone | The creator's `score`, stats and abstracts. |
+| `GET /v1/stats` | Anyone | Public home-page figures: `insights_live`, `trades_linked_24h` and `fees_paid_to_creators`. |
 | `GET /v1/tokens/:tokenId` | A read key or session, with an active subscription (or the thesis's creator) | The full thesis: `conditions`, `messages`, `integrity` and `subscription.subscribed_until`. Without a subscription: HTTP 402 `subscription_required`, with the terms in `error.details`. |
 | `GET /v1/subscription` | A session or any key | `account_id`, `active`, `subscribed_until` and the `terms`, like the contract's `subscription_of`. |
 | `POST /v1/subscription` | A session or a trade key (any other key gets 403 `missing_scope`) | Pays one period from the ledger balance (402 `insufficient_balance` when it is too low). A renewal starts when the current period ends. |

@@ -23,7 +23,7 @@ import {
 import { createChallenge, signOut, verifySignIn } from "../services/auth.ts";
 import type { ExpiryEvaluator } from "../services/expiry.ts";
 import {
-  getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight, thesisProof,
+  getPreview, listPreviews, publishInsight, publishVersion, platformStats, publisherProfile, readInsight, thesisProof,
 } from "../services/insights.ts";
 import { confirmApproval, createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { closeTrade, getClosingOrder } from "../services/trades.ts";
@@ -315,6 +315,11 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   // ---- public (no wallet needed): publisher details and abstracts only ----
   app.get("/v1/publishers/:nearAccountId", (req, res) => {
     res.json(publisherProfile(ctx, req.params.nearAccountId!));
+  });
+
+  // Public figures for the home page.
+  app.get("/v1/stats", (_req, res) => {
+    res.json(platformStats(ctx));
   });
 
   app.get("/v1/tokens", (req, res) => {
