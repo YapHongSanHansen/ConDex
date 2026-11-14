@@ -2,6 +2,7 @@
 // and sent in order, and what only the trader can sign (subscribe, reserve_fee) is read from the contract.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
+import { loadConfig } from "../src/config.ts";
 import { orderHash } from "../src/near/chain.ts";
 import { type ChainClient, ContractRefused, type Signer } from "../src/near/chainClient.ts";
 import { ETH_THESIS, connectWallet, startServer } from "./helpers.ts";
@@ -201,5 +202,33 @@ describe("an order waits for the trader's own approval on the contract", () => {
     await drain();
     const release = chain.calls.find((c) => c.method === "release_fee" && c.args.order_id === order.id);
     assert.equal(release?.signer, "reporter.testnet");
+  });
+});
+
+describe("NEAR is the default, the mock ledger is the backup", () => {
+  const KEYS = {
+    CONDEX_NEAR_OPERATOR_KEY: `ed25519:${"3".repeat(64)}`,
+    CONDEX_NEAR_REPORTER_KEY: `ed25519:${"4".repeat(64)}`,
+  };
+
+  test("with the NEAR keys set, ConDex runs on the contract", () => {
+    const config = loadConfig(KEYS);
+    assert.equal(config.ledger, "near");
+    assert.equal(config.ledgerBackupReason, null);
+    assert.equal(config.near?.contractId, "dryward2518.testnet");
+    assert.equal(config.near?.reporterId, "reporter.dryward2518.testnet");
+  });
+
+  test("without them, it falls back to the mock and says why", () => {
+    const config = loadConfig({});
+    assert.equal(config.ledger, "mock");
+    assert.match(config.ledgerBackupReason!, /no NEAR keys/);
+  });
+
+  test("CONDEX_LEDGER=mock keeps the backup even with keys; CONDEX_LEDGER=near without keys stops", () => {
+    const forced = loadConfig({ ...KEYS, CONDEX_LEDGER: "mock" });
+    assert.equal(forced.ledger, "mock");
+    assert.equal(forced.ledgerBackupReason, null);
+    assert.throws(() => loadConfig({ CONDEX_LEDGER: "near" }), /CONDEX_NEAR_OPERATOR_KEY/);
   });
 });

@@ -240,9 +240,10 @@ npm test             # API flow tests and MCP tests
 npm run test:page    # opens the test console in headless Chrome/Edge and checks every button
 npm run typecheck
 
-# On the NEAR contract instead of the mock ledger (keys from the macOS Keychain, see docs/near-contract.md):
+# The server runs on the NEAR contract when its keys are in .env, and on the mock ledger as a backup when
+# they are not. To use the contract (keys from the macOS Keychain, see docs/near-contract.md):
 scripts/near-keys-to-env.sh
-CONDEX_LEDGER=near npm start
+npm start                      # CONDEX_LEDGER=mock npm start forces the backup
 node scripts/testnet-flow.ts   # one full trade through the API on testnet
 ```
 
@@ -415,7 +416,7 @@ Invalid values (a misspelt network, `CONDEX_DEV_MODE=yes`, a timeout of `5m`) st
 | `CONDEX_SUBSCRIPTION_FEE_NEAR` | `1` | The price of one subscription period, in NEAR. |
 | `CONDEX_SUBSCRIPTION_DAYS` | `30` | How long one subscription period lasts. |
 | `CONDEX_TREASURY_ACCOUNT` | `condex-treasury.testnet` | The NEAR account that receives subscription fees on the mock ledger. |
-| `CONDEX_LEDGER` | `mock` | `mock`, or `near` to run on the ConDex contract. See [docs/near-contract.md](docs/near-contract.md#connecting-the-api-to-the-contract). |
+| `CONDEX_LEDGER` | `near` when the NEAR keys below are set, else `mock` | `near` runs on the ConDex contract (see [docs/near-contract.md](docs/near-contract.md#connecting-the-api-to-the-contract)). `mock` is the backup: it is used when the keys are missing (the server says so at startup), when set explicitly, and by the tests. `near` set explicitly without keys stops the server. |
 | `CONDEX_NEAR_CONTRACT` | `dryward2518.testnet` | The contract account, with `CONDEX_LEDGER=near`. |
 | `CONDEX_NEAR_OPERATOR_ID`, `CONDEX_NEAR_OPERATOR_KEY` | the contract account; none | The account that mints thesis tokens, and its `ed25519:…` secret key. Required with `CONDEX_LEDGER=near`; `scripts/near-keys-to-env.sh` writes both into `.env`. |
 | `CONDEX_NEAR_REPORTER_ID`, `CONDEX_NEAR_REPORTER_KEY` | `reporter.<contract>`; none | The account that settles and releases fees and records closes, and its secret key. Required with `CONDEX_LEDGER=near`. |

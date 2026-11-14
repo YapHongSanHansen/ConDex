@@ -1,6 +1,6 @@
 # The ConDex NEAR contract
 
-The contract is written, in `contract/`, and follows this document. It has unit tests and is deployed on NEAR testnet at `dryward2518.testnet` (see [Testnet deployment](#testnet-deployment)). The API runs against it with `CONDEX_LEDGER=near` (see [Connecting the API to the contract](#connecting-the-api-to-the-contract)); by default it still runs against `MockLedger` (`src/ledger/mockLedger.ts`), which stands in for the contract. See [Building and testing](#building-and-testing).
+The contract is written, in `contract/`, and follows this document. It has unit tests and is deployed on NEAR testnet at `dryward2518.testnet` (see [Testnet deployment](#testnet-deployment)). The API runs against it whenever the operator and reporter keys are set (see [Connecting the API to the contract](#connecting-the-api-to-the-contract)). Without them it falls back to `MockLedger` (`src/ledger/mockLedger.ts`), which stands in for the contract; the tests always use that backup. See [Building and testing](#building-and-testing).
 
 The contract follows the flow described in the README: a trade is closed by a close reported from the execution side, and ConDex evaluates each thesis against market data after its expiry. It also includes two rules the README now describes too: the contract checks the trader's own approval before reserving a fee, and it records subscriptions.
 
@@ -250,7 +250,7 @@ near contract call-function as-read-only dryward2518.testnet nft_metadata json-a
 
 "Ledger" in this codebase means the on-chain record: who owns which thesis token, who has deposited, and which fees are reserved or paid. It has nothing to do with the Ledger hardware wallet.
 
-`src/ledger/ledger.ts` lists the calls the API makes to that record. With `CONDEX_LEDGER=near`, `NearLedger` (`src/ledger/nearLedger.ts`) takes the place of `MockLedger`.
+`src/ledger/ledger.ts` lists the calls the API makes to that record. With the NEAR keys set (or `CONDEX_LEDGER=near`), `NearLedger` (`src/ledger/nearLedger.ts`) takes the place of `MockLedger`, which stays as the backup.
 
 - **A local mirror and an outbox, instead of an asynchronous interface.** The API calls the ledger inside database transactions. `NearLedger` keeps the same rules locally and, in the same transaction, queues the matching contract call in `chain_outbox`. `ChainSender` (`src/near/chainSender.ts`) sends the queue in order: `mint_thesis` as the operator; `settle_fee` (with its proof built from the order and its first fill), `release_fee` and `record_close` as the reporter. Until a call is sent its tx is `pending:<id>`, which the real hash then replaces. A network error is retried; a call the contract refuses is marked `failed` with the reason (`GET /v1/chain/outbox`, dev mode).
 - **The trader approves on chain.** `POST /v1/orders` returns the order as `awaiting_approval`, with the `reserve_fee` call to sign (`order_id`, `token_id`, `fee`, `order_hash`). After the trader signs it, `POST /v1/orders/:id/confirm-approval` reads `get_reserve`, checks the payer, token, fee, fingerprint and status (409 `approval_missing` or `approval_mismatch` otherwise), and only then submits the order.

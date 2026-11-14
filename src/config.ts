@@ -47,10 +47,13 @@ export interface Config {
   /** The subscription that unlocks every full thesis. Its fee goes to ConDex, not to creators. */
   subscription: SubscriptionConfig;
   /**
-   * Where fees, theses and subscriptions are recorded. "mock" (the default) keeps them in SQLite; "near" also
-   * sends them to the ConDex contract, and reads subscriptions and balances from it.
+   * Where fees, theses and subscriptions are recorded. "near" (the default when the NEAR keys are set) sends
+   * them to the ConDex contract and reads subscriptions and balances from it. "mock" is the backup: it keeps
+   * everything in SQLite, and is used when the keys are missing, when CONDEX_LEDGER=mock, and by the tests.
    */
   ledger: "mock" | "near";
+  /** Why the mock backup is in use, shown at startup. null when on NEAR or when the mock was asked for. */
+  ledgerBackupReason: string | null;
   /** The contract and the two accounts ConDex signs with. null unless ledger is "near". */
   near: NearLedgerConfig | null;
 }
@@ -117,7 +120,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error("Set CONDEX_AUTH_RECIPIENT to your website's domain (for example condex.app) when CONDEX_DEV_MODE=false");
   }
 
-  const ledger = parseChoice(env, "CONDEX_LEDGER", ["mock", "near"] as const, "mock");
+  // NEAR when its keys are set, the mock as the backup when they are not. An explicit CONDEX_LEDGER wins:
+  // "near" without keys stops here (in loadNear), and "mock" keeps the backup even with keys.
+  const hasNearKeys = !!(env.CONDEX_NEAR_OPERATOR_KEY?.trim() && env.CONDEX_NEAR_REPORTER_KEY?.trim());
+  const ledger = parseChoice(env, "CONDEX_LEDGER", ["mock", "near"] as const, hasNearKeys ? "near" : "mock");
+  const ledgerBackupReason = ledger === "mock" && !env.CONDEX_LEDGER?.trim()
+    ? "no NEAR keys (CONDEX_NEAR_OPERATOR_KEY, CONDEX_NEAR_REPORTER_KEY); run scripts/near-keys-to-env.sh to use the contract"
+    : null;
 
   // ConDex's AI: the OpenAI-compatible model when it has a key, else Claude when Anthropic has one.
   const llm = loadLlm(env);
@@ -145,6 +154,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     expiryAi,
     llm,
     ledger,
+    ledgerBackupReason,
     near: ledger === "near" ? loadNear(env) : null,
     subscription: {
       feeNear: parseNearAmount(env, "CONDEX_SUBSCRIPTION_FEE_NEAR", "1"),
