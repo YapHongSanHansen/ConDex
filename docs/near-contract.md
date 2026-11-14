@@ -35,7 +35,7 @@ The contract believes whatever the reporter says about fills and closes. It cann
 
 Amounts are in yoctoNEAR, written as text. Times and periods are Unix milliseconds (see [Timestamps](#timestamps)). Prices and quantities are decimal text such as `"3350.5"`, as the API writes them.
 
-The contract exports these 19 functions, plus `contract_source_metadata`, which the NEAR SDK adds to every contract.
+The contract exports these 21 functions, plus `contract_source_metadata`, which the NEAR SDK adds to every contract.
 
 ### Setup
 
@@ -109,6 +109,15 @@ In the API a trade can be closed by a close event or by a closing order. Both en
 | `balance_of(account_id)` | `available` (what the account can withdraw, or reserve for a fee), `reserved`, and `earned_total` (everything it was ever credited as income). |
 | `get_reserve(order_id)` | The reserve, the order fingerprint the trader approved, and whether it is reserved, settled or released. |
 | `get_proofs(token_id, from_index, limit)` | The proofs of trade recorded on a token, each with its closing fills. |
+| `get_evaluation(token_id)` | The thesis's evaluation, or `null` before it is recorded. `nft_token` also carries it, as `evaluation` in the metadata's `extra`. |
+
+### The thesis evaluation
+
+| Function | Who calls it | What it does |
+| --- | --- | --- |
+| `record_evaluation(token_id, outcome, conditions_met, reference_price, final_price, entered_at, target_hit_at, invalidated_at, prices_used, source)` | Reporter | Records, once, whether the thesis's stated conditions were met. Refused before the token's `expires_at` **by the block clock**, so it can never be recorded early. `outcome` is one of the API's eight outcomes, and `conditions_met` must agree with it. `source` is `simulated` or `feed:<name>`. The contract adds `deadline` (the token's `expires_at`) and `evaluated_at` (the block time). Returns `false`, changing nothing, when the token already has one: an evaluation is never replaced. |
+
+Evaluations are kept under their own storage prefix, not in a field of the contract's state, so adding them changed none of the stored data. The upgrade was a plain redeploy with no migration, tested first on a local node (`contract/sandbox`, `upgrading_keeps_the_state_and_adds_evaluations`).
 
 ## The trader approves the trade and its fee once
 
@@ -181,11 +190,11 @@ Every token, reserve, proof, closing fill and subscription takes storage, and NE
 - **Matching the order to the thesis.** The token does not store the market or the direction, so the API checks them before the trader is asked to approve.
 - **The abstract.** The contract only says who is subscribed.
 - **Results, verified results and the creator score.** The score service calculates them. The contract stores the fills, not the percentages.
-- **The thesis evaluation.** See [Open decisions](#open-decisions).
+- **Judging the thesis.** The API compares the thesis with market data and sends the outcome with `record_evaluation`. The contract records it, refuses it before the expiry, and never lets it change.
 
 ## Events
 
-Besides the NEP-171 mint event, the contract writes its own event (standard `condex`) for each change: `deposit`, `withdraw`, `withdraw_failed`, `fee_reserved`, `fee_settled`, `fee_released`, `trade_closed`, `subscribed` and `subscription_terms_set`. An explorer shows them on the transaction.
+Besides the NEP-171 mint event, the contract writes its own event (standard `condex`) for each change: `deposit`, `withdraw`, `withdraw_failed`, `fee_reserved`, `fee_settled`, `fee_released`, `trade_closed`, `subscribed`, `subscription_terms_set` and `thesis_evaluated`. An explorer shows them on the transaction.
 
 ## Building and testing
 
@@ -204,21 +213,22 @@ cargo near build non-reproducible-wasm --locked --no-abi  # build the file to de
 - `--no-abi` skips an optional file that describes the contract's functions to other tools. Generating it fails on Windows, at the linking step. The contract deploys and works without it. On Linux or macOS the flag can be left out.
 - On Windows, `contract/.cargo/config.toml` lets the tests build without the NASM assembler.
 
-Not done yet: tests against a real NEAR node. The unit tests run each function against the SDK's mocked blockchain, which covers the contract's own rules but not the transfer of NEAR between accounts. On testnet, only the read functions have been called so far.
+The unit tests run each function against the SDK's mocked blockchain. `contract/sandbox` runs the built contract on a local NEAR node with real accounts and real NEAR (`cargo test` there, after `cargo near build`), including upgrading from the first deployed build. On testnet, full trades have run through the API (`scripts/testnet-flow.ts`), and evaluations have been recorded by the API's sweep.
 
 ## Testnet deployment
 
 | | |
 | --- | --- |
 | Contract account | `dryward2518.testnet` |
-| Deployed | 14 November 2026, transaction [`2HMwFmJWjh4q9513WUC3RzrXEpaS4yNvgfuD7jeDZAbX`](https://explorer.testnet.near.org/transactions/2HMwFmJWjh4q9513WUC3RzrXEpaS4yNvgfuD7jeDZAbX) |
-| Code | SHA-256 `4ce810df9bd3494375a5a832c58fdf7721d30de564168153f108bbfb7bb26771`, 227 KB, built with `cargo near build non-reproducible-wasm --locked --no-abi` from commit `361e35c` |
+| Deployed | 14 November 2026, transaction [`2HMwFmJWjh4q9513WUC3RzrXEpaS4yNvgfuD7jeDZAbX`](https://explorer.testnet.near.org/transactions/2HMwFmJWjh4q9513WUC3RzrXEpaS4yNvgfuD7jeDZAbX) (code SHA-256 `4ce810df…`, 227 KB, from commit `361e35c`) |
+| Upgraded | 14 November 2026, transaction [`6JzPq6xELkES6CCSb9A49D8rw4QcFGPdvvN4xBwWDcS7`](https://explorer.testnet.near.org/transactions/6JzPq6xELkES6CCSb9A49D8rw4QcFGPdvvN4xBwWDcS7): adds `record_evaluation` and `get_evaluation`. No init call, so every token, balance, reserve, proof and subscription was kept |
+| Code | SHA-256 `eda2a3709069b71992455070c53823a9630218a5e4dfed8713fbadc5b971a4b0`, 247 KB, built with `cargo near build non-reproducible-wasm --locked` on macOS |
 | Owner and operator | `dryward2518.testnet` |
 | Reporter | `reporter.dryward2518.testnet` |
 | Subscription | 1 NEAR per 30 days |
 
 - **The checksum is from a non-reproducible build.** It matches the file built on the machine that deployed it. The same source built on another machine can give a different checksum.
-- **The reporter account did not exist at deployment.** The contract only stores its name. It has to be created before any fee can be settled or released, or any close recorded. Only `dryward2518.testnet` can create it.
+- **The reporter account** `reporter.dryward2518.testnet` was created after deployment, by `dryward2518.testnet` (transaction `9eERhsEYwASgCPzA6zKJGmWFDuPxz3MCEHUNFwtL7qm5`).
 - **The contract is on a main account.** Its stored data cannot be reset there. A later version that stores data differently has to be deployed to a new account, or come with a migration.
 
 To check the deployment, call a read function. It costs nothing and needs no key:
@@ -240,7 +250,7 @@ near contract call-function as-read-only dryward2518.testnet nft_metadata json-a
 
 1. **Later fills and the final status of the opening order.** Only the first fill is recorded, with the proof of trade. The result of a trade uses the average price of all its opening fills, and a trade only counts as closed once the opening order can fill no further. So a result cannot be recalculated from NEAR alone when an order filled in parts, and `record_close` cannot check a close against the quantity still open. Fixing this needs two more functions: one to record each later fill, and one to mark the opening order finished.
 2. **The thesis creator's own trades.** The README says a creator's own trade is free and counts in their own track record. `settle_fee` only records a proof when there is a fee to pay, so a fee-free trade has no way onto the token yet. The API also refuses it today (`self_link` in `src/services/orders.ts`).
-3. **The thesis evaluation.** The API records it once, off-chain. Until it is on the token, a creator's accuracy cannot be checked from NEAR. Recording it would need one more function, for example `record_evaluation(token_id, outcome, evaluated_at, source)`, and a decision on which account may call it.
+3. **The thesis evaluation.** Done: `record_evaluation`, called by the reporter (see [The thesis evaluation](#the-thesis-evaluation)). A creator's accuracy can now be counted from NEAR. The reporter is still trusted to report what the market data said, as it is for fills; a public price source would let anyone re-check it.
 4. **The subscription terms.** The three assumptions under [Subscriptions and the abstract](#subscriptions-and-the-abstract).
 5. **Replacing the operator or the reporter.** Both accounts are fixed when the contract is set up. If one of their keys leaks, the only fix today is to deploy the contract again.
 6. **A reserve the reporter never reports on.** Only the reporter can settle or release. If it never does, the trader's fee stays reserved. A time limit after which the trader can take it back would remove that dependence.

@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 export type Db = DatabaseSync;
 
 /** Bump when the schema changes. Only matters for the opt-in file store (see `openDb`). */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 const SCHEMA = `
 -- Accounts and credentials ---------------------------------------------
@@ -307,7 +307,8 @@ CREATE TABLE IF NOT EXISTS thesis_evaluations (
   prices_used       INTEGER NOT NULL,
   source            TEXT NOT NULL,     -- which market data feed
   deadline          TEXT NOT NULL,
-  evaluated_at      TEXT NOT NULL
+  evaluated_at      TEXT NOT NULL,
+  evaluation_tx     TEXT                -- recorded on the thesis token (record_evaluation); "pending:<id>" until sent
 );
 `;
 

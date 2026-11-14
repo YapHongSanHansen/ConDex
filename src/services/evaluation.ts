@@ -1,4 +1,5 @@
 import type { Ctx } from "../context.ts";
+import { transaction } from "../db.ts";
 import type { PricePoint } from "../market/marketData.ts";
 import { formatDecimal, parseDecimal } from "../quantity.ts";
 import { nowIso } from "../util.ts";
@@ -35,7 +36,7 @@ const OUTCOME_TEXT: Record<Outcome, string> = {
 export interface EvaluationRow {
   token_id: string; outcome: Outcome; conditions_met: number | null; reference_price: string | null;
   final_price: string | null; entered_at: string | null; target_hit_at: string | null; invalidated_at: string | null;
-  prices_used: number; source: string; deadline: string; evaluated_at: string;
+  prices_used: number; source: string; deadline: string; evaluated_at: string; evaluation_tx: string | null;
 }
 
 /**
@@ -50,12 +51,22 @@ export function evaluateThesis(ctx: Ctx, row: VersionRow): EvaluationRow | null 
 
   const ev = { token_id: row.token_id, ...judge(row, ctx.market.priceAt(row.market, row.created_at),
     ctx.market.between(row.market, row.created_at, deadline)), source: ctx.market.name, deadline, evaluated_at: nowIso() };
-  ctx.db.prepare(
-    `INSERT OR IGNORE INTO thesis_evaluations (token_id, outcome, conditions_met, reference_price, final_price, entered_at,
-       target_hit_at, invalidated_at, prices_used, source, deadline, evaluated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(ev.token_id, ev.outcome, ev.conditions_met, ev.reference_price, ev.final_price, ev.entered_at, ev.target_hit_at,
-    ev.invalidated_at, ev.prices_used, ev.source, ev.deadline, ev.evaluated_at);
+  transaction(ctx.db, () => {
+    const inserted = ctx.db.prepare(
+      `INSERT OR IGNORE INTO thesis_evaluations (token_id, outcome, conditions_met, reference_price, final_price, entered_at,
+         target_hit_at, invalidated_at, prices_used, source, deadline, evaluated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(ev.token_id, ev.outcome, ev.conditions_met, ev.reference_price, ev.final_price, ev.entered_at, ev.target_hit_at,
+      ev.invalidated_at, ev.prices_used, ev.source, ev.deadline, ev.evaluated_at);
+    if (inserted.changes !== 1) return;
+    // The first time only: record it on the thesis token too, so the evaluation is part of the token's history.
+    const { tx } = ctx.ledger.recordEvaluation(ev.token_id, {
+      outcome: ev.outcome, conditionsMet: ev.conditions_met === null ? null : ev.conditions_met === 1,
+      referencePrice: ev.reference_price, finalPrice: ev.final_price, enteredAt: ev.entered_at, targetHitAt: ev.target_hit_at,
+      invalidatedAt: ev.invalidated_at, pricesUsed: ev.prices_used, source: ev.source,
+    });
+    ctx.db.prepare("UPDATE thesis_evaluations SET evaluation_tx = ? WHERE token_id = ?").run(tx, ev.token_id);
+  });
   return ctx.db.prepare("SELECT * FROM thesis_evaluations WHERE token_id = ?").get(row.token_id) as unknown as EvaluationRow;
 }
 
@@ -136,6 +147,8 @@ export function evaluationView(ctx: Ctx, row: VersionRow, ev: EvaluationRow | nu
     source: ev.source,
     deadline: ev.deadline,
     evaluated_at: ev.evaluated_at,
+    /** Where it is recorded on the thesis token: "pending:<id>" until the call is sent on NEAR. */
+    recorded: { ledger: ctx.ledger.kind, tx: ev.evaluation_tx },
   };
 }
 

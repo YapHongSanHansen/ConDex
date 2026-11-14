@@ -15,6 +15,7 @@ use near_sdk::{env, near, require, AccountId, BorshStorageKey, NearToken, PanicO
 
 mod close;
 mod escrow;
+mod evaluation;
 mod events;
 mod nft;
 mod subscription;
@@ -37,6 +38,8 @@ enum StorageKey {
     ProofIndex,
     Subscriptions,
     CloseEvents,
+    // Added after the first deployment. New variants go at the end, so the earlier prefixes keep their bytes.
+    Evaluations,
 }
 
 #[near(

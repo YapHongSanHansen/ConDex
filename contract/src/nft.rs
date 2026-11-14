@@ -73,6 +73,7 @@ impl Contract {
             revenue_split: thesis.revenue_split.clone(),
             expiry_set_by: thesis.expiry_set_by,
             proof_count: thesis.proof_count,
+            evaluation: crate::evaluation::evaluation_of(&token_id),
         };
         Some(Token {
             owner_id: thesis.owner_id.clone(),

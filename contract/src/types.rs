@@ -91,6 +91,65 @@ pub struct ThesisExtra {
     pub revenue_split: Vec<SplitEntry>,
     pub expiry_set_by: ExpirySetBy,
     pub proof_count: u32,
+    /// Whether the thesis's stated conditions were met, recorded once after its expiry. None until then.
+    pub evaluation: Option<Evaluation>,
+}
+
+/// What ConDex found when it evaluated a thesis against market data after its expiry. The same eight
+/// outcomes as the API (`src/services/evaluation.ts`).
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    /// The target price was reached before the invalidation price.
+    TargetHit,
+    /// The invalidation price was reached first.
+    Invalidated,
+    /// The entry price was never reached, so the thesis was never in play.
+    NotTriggered,
+    /// Entered, but neither the target nor the invalidation was reached by the deadline.
+    TargetMissed,
+    /// No target price: at the deadline the price had moved in the thesis's direction.
+    InDirection,
+    /// No target price: at the deadline it had moved the other way, or not at all.
+    AgainstDirection,
+    /// The target or invalidation was already passed when the thesis was published, so it is not judged.
+    AlreadyReached,
+    /// The market data feed had no price for this market.
+    NoData,
+}
+
+impl Outcome {
+    /// Whether the conditions were met, as this outcome says: true, false, or None when it cannot be judged.
+    pub fn conditions_met(&self) -> Option<bool> {
+        match self {
+            Outcome::TargetHit | Outcome::InDirection => Some(true),
+            Outcome::Invalidated | Outcome::TargetMissed | Outcome::AgainstDirection => Some(false),
+            Outcome::NotTriggered | Outcome::AlreadyReached | Outcome::NoData => None,
+        }
+    }
+}
+
+/// The evaluation of one thesis version, recorded once on its token.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Evaluation {
+    pub outcome: Outcome,
+    pub conditions_met: Option<bool>,
+    /// The last price at publishing, and the last price at the deadline. Decimal text.
+    pub reference_price: Option<String>,
+    pub final_price: Option<String>,
+    pub entered_at: Option<TimestampMs>,
+    pub target_hit_at: Option<TimestampMs>,
+    pub invalidated_at: Option<TimestampMs>,
+    /// How many market prices the evaluation used.
+    pub prices_used: u32,
+    /// The market data feed: "simulated", or "feed:<name>".
+    pub source: String,
+    /// The token's `expires_at`: prices up to this moment were judged.
+    pub deadline: TimestampMs,
+    /// When it was recorded, by the block clock. Never before the deadline.
+    pub evaluated_at: TimestampMs,
 }
 
 /// NEP-177 collection metadata.
