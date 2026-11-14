@@ -166,6 +166,20 @@ test("an MCP server saying hello makes its key show as connected, with its tools
   await sayHello({ apiUrl: srv.base, apiKey: "cdx_not-a-real-key" }); // must not throw
 });
 
+test("a repeated hello keeps the first connection time and refreshes the last-seen time", async () => {
+  const { api } = srv;
+  const session = (await connectWallet(api, "dana-mcp.testnet")).session;
+  const key = (await api("POST", "/v1/keys", { key: session, body: { scopes: ["publish"], label: "MCP agent" } })).body;
+  const state = async () => (await api("GET", "/v1/keys", { key: session })).body.keys.find((k: { id: string }) => k.id === key.id).mcp;
+  await sayHello({ apiUrl: srv.base, apiKey: key.secret });
+  const first = await state();
+  await new Promise((r) => setTimeout(r, 15));
+  await sayHello({ apiUrl: srv.base, apiKey: key.secret });
+  const second = await state();
+  assert.equal(second.connectedAt, first.connectedAt);
+  assert.ok(second.lastSeenAt > first.lastSeenAt);
+});
+
 test("claude cli finder reports a CLI that is installed but not on PATH", async () => {
   const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");

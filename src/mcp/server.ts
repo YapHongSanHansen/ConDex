@@ -238,6 +238,9 @@ export function buildMcpServer(opts: McpOptions): McpServer {
   return server;
 }
 
+/** How often a running MCP server tells ConDex it is still there. */
+export const HELLO_EVERY_MS = 30_000;
+
 /**
  * Tell ConDex this key's MCP server has started, so the console can show "connected" and the tool list.
  * Failure is only logged (to stderr: stdout is the MCP protocol channel).
@@ -273,4 +276,7 @@ if (isMain()) {
   const server = buildMcpServer(opts);
   await server.connect(new StdioServerTransport());
   void sayHello(opts);
+  // Say hello again every so often, so "connected" means this process is still running now, and so a restarted ConDex
+  // learns about a Claude Code session that was already open. It does not keep the process alive.
+  setInterval(() => void sayHello(opts), HELLO_EVERY_MS).unref();
 }
