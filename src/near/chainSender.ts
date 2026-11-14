@@ -6,6 +6,7 @@ import { type ChainClient, ContractRefused, type Signer } from "./chainClient.ts
 /** Where a "pending:<id>" tx can be stored, so the real hash replaces it once the call is sent. */
 const TX_COLUMNS: Array<[table: string, column: string]> = [
   ["insight_versions", "mint_tx"], ["ledger_tokens", "mint_tx"], ["receipts", "settle_tx"], ["ledger_reserves", "final_tx"],
+  ["thesis_evaluations", "evaluation_tx"],
 ];
 
 const MAX_BACKOFF_MS = 60_000;
@@ -57,7 +58,9 @@ export class ChainSender {
       }
     } catch (err) {
       const message = String((err as Error)?.message ?? err).slice(0, 2000);
-      if (err instanceof ContractRefused || err instanceof ProofMissing) {
+      // The block clock can be a little behind ours at a thesis's expiry: that refusal is worth trying again.
+      const tooEarly = /cannot be evaluated before its deadline/.test(message);
+      if ((err instanceof ContractRefused && !tooEarly) || err instanceof ProofMissing) {
         this.db.prepare("UPDATE chain_outbox SET status = 'failed', error = ?, attempts = attempts + 1 WHERE seq = ?").run(message, row.seq);
       } else {
         const wait = Math.min(1000 * 2 ** row.attempts, MAX_BACKOFF_MS);

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { loadConfig } from "../src/config.ts";
 import { orderHash } from "../src/near/chain.ts";
+import { sweepEvaluations } from "../src/services/evaluationSweep.ts";
 import { type ChainClient, ContractRefused, type Signer } from "../src/near/chainClient.ts";
 import { ETH_THESIS, connectWallet, startServer } from "./helpers.ts";
 
@@ -230,5 +231,38 @@ describe("NEAR is the default, the mock ledger is the backup", () => {
     assert.equal(forced.ledger, "mock");
     assert.equal(forced.ledgerBackupReason, null);
     assert.throws(() => loadConfig({ CONDEX_LEDGER: "near" }), /CONDEX_NEAR_OPERATOR_KEY/);
+  });
+});
+
+describe("each evaluation is recorded on its thesis token", () => {
+  test("after the expiry the sweep evaluates the thesis and queues record_evaluation once", async () => {
+    const now = Date.now();
+    await api("POST", "/v1/sim/market/ETH-USD/prices", { body: { price: "3500", at: new Date(now - 1000).toISOString() } });
+    const published = await api("POST", "/v1/insights", {
+      key: alicePublish, body: { ...ETH_THESIS, title: "short-lived", expiry_date: undefined, expires_at: new Date(now + 1500).toISOString() },
+    });
+    assert.equal(published.status, 201, JSON.stringify(published.body));
+    const shortLived = published.body.token_id;
+    await api("POST", "/v1/sim/market/ETH-USD/prices", { body: { price: "3400", at: new Date(now + 500).toISOString() } });
+    await new Promise((r) => setTimeout(r, 1700));
+
+    assert.ok(sweepEvaluations(srv.ctx) >= 1);
+    assert.equal(sweepEvaluations(srv.ctx), 0, "an evaluated thesis is not evaluated again");
+    await drain();
+    const calls = chain.calls.filter((c) => c.method === "record_evaluation" && c.args.token_id === shortLived);
+    assert.equal(calls.length, 1);
+    const [call] = calls;
+    assert.equal(call!.signer, "reporter.testnet");
+    // A short thesis whose price fell, with no target price: in_direction, conditions met.
+    assert.deepEqual(
+      [call!.args.outcome, call!.args.conditions_met, call!.args.reference_price, call!.args.final_price, call!.args.prices_used, call!.args.source],
+      ["in_direction", true, "3500", "3400", 2, "simulated"],
+    );
+
+    const evaluation = (await api("GET", `/v1/tokens/${shortLived}/proof`)).body.evaluation;
+    assert.equal(evaluation.outcome, "in_direction");
+    assert.match(evaluation.recorded.tx, /^tx\d+$/, "the proof shows the tx that recorded it on the token");
+    await drain();
+    assert.equal(chain.calls.filter((c) => c.method === "record_evaluation" && c.args.token_id === shortLived).length, 1, "reading it again sends nothing");
   });
 });

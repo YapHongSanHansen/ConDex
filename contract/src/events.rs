@@ -2,7 +2,7 @@
 
 use near_sdk::{near, AccountId, NearToken};
 
-use crate::types::{OrderId, TimestampMs, TokenId};
+use crate::types::{OrderId, Outcome, TimestampMs, TokenId};
 
 /// The NEP-171 event wallets and explorers look for when a token is minted.
 #[near(event_json(standard = "nep171"))]
@@ -83,4 +83,11 @@ pub enum CondexEvent {
 
     #[event_version("1.0.0")]
     SubscriptionTermsSet { price: NearToken, period: u64 },
+
+    #[event_version("1.0.0")]
+    ThesisEvaluated {
+        token_id: TokenId,
+        outcome: Outcome,
+        conditions_met: Option<bool>,
+    },
 }

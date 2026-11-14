@@ -15,6 +15,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 const WASM: &str = "../target/near/condex_contract.wasm";
+/// The build of the contract as first deployed (commit 361e35c), kept to test upgrading from it.
+const WASM_V1: &str = "../target/near/condex_contract_v1.wasm";
 const DAY_MS: u64 = 86_400_000;
 
 fn near(n: u128) -> NearToken {
@@ -71,8 +73,12 @@ struct Setup {
 }
 
 async fn setup() -> anyhow::Result<Setup> {
+    setup_with(WASM).await
+}
+
+async fn setup_with(path: &str) -> anyhow::Result<Setup> {
     let worker = near_workspaces::sandbox().await?;
-    let wasm = std::fs::read(WASM).map_err(|e| anyhow::anyhow!("{WASM}: {e}. Build it first with cargo near."))?;
+    let wasm = std::fs::read(path).map_err(|e| anyhow::anyhow!("{path}: {e}. Build it first with cargo near."))?;
     let contract = worker.dev_deploy(&wasm).await?;
     let root = worker.root_account()?;
     let mut accounts = Vec::new();
@@ -236,5 +242,65 @@ async fn the_chain_clock_stops_approvals_at_the_expiry() -> anyhow::Result<()> {
     assert!(failure(late).contains("has expired, so no new trade can be linked"));
     println!("late approval refused: the thesis has expired");
     assert_eq!(yocto(&balance(&s.contract, &s.bob).await?["reserved"]), 0);
+    Ok(())
+}
+
+/// Redeploying the new code over the deployed one keeps every token, balance, reserve and proof, and adds the
+/// evaluation. This is what upgrading dryward2518.testnet does.
+#[tokio::test]
+async fn upgrading_keeps_the_state_and_adds_evaluations() -> anyhow::Result<()> {
+    if !std::path::Path::new(WASM_V1).exists() {
+        println!("{WASM_V1} not found; skipping the upgrade test");
+        return Ok(());
+    }
+    let s = setup_with(WASM_V1).await?;
+    let token = "ins_upgrade-v1";
+    mint(&s, token, 5_000).await?; // expires 5 seconds after it is minted
+    mint(&s, "ins_later-v1", DAY_MS).await?;
+    s.bob.call(s.contract.id(), "deposit").deposit(near(1)).transact().await?.into_result()?;
+    reserve(&s, &s.bob, "ord_up", token).await?.into_result()?;
+    let now = now_ms(&s.worker).await?;
+    s.reporter.call(s.contract.id(), "settle_fee")
+        .args_json(json!({ "order_id": "ord_up", "receipt_id": "rcpt_up", "proof": proof("evt_up", now) }))
+        .transact().await?.into_result()?;
+    let before = (
+        s.contract.view("get_proofs").args_json(json!({ "token_id": token, "from_index": 0, "limit": 5 })).await?.json::<Value>()?,
+        balance(&s.contract, &s.alice).await?,
+        balance(&s.contract, &s.bob).await?,
+    );
+
+    // The upgrade: the new code, no init call.
+    let new_wasm = std::fs::read(WASM)?;
+    s.contract.as_account().deploy(&new_wasm).await?.into_result()?;
+    let after = (
+        s.contract.view("get_proofs").args_json(json!({ "token_id": token, "from_index": 0, "limit": 5 })).await?.json::<Value>()?,
+        balance(&s.contract, &s.alice).await?,
+        balance(&s.contract, &s.bob).await?,
+    );
+    assert_eq!(before, after, "the proofs and balances read the same after the upgrade");
+    let sub: Value = s.contract.view("subscription_of").args_json(json!({ "account_id": s.bob.id() })).await?.json()?;
+    assert_eq!(sub["price"], near(1).as_yoctonear().to_string());
+
+    let evaluate = |token_id: &'static str| {
+        s.reporter.call(s.contract.id(), "record_evaluation").args_json(json!({
+            "token_id": token_id, "outcome": "target_hit", "conditions_met": true, "reference_price": "3500",
+            "final_price": "3400", "entered_at": null, "target_hit_at": null, "invalidated_at": null, "prices_used": 2,
+            "source": "simulated",
+        }))
+    };
+    // Before its expiry, by the chain's clock, a thesis cannot be evaluated.
+    assert!(failure(evaluate("ins_later-v1").transact().await?).contains("cannot be evaluated before its deadline"));
+
+    s.worker.fast_forward(100).await?;
+    let first: bool = evaluate(token).transact().await?.into_result()?.json()?;
+    let second: bool = evaluate(token).transact().await?.into_result()?.json()?;
+    assert!(first && !second, "recorded once, never replaced");
+    let ev: Value = s.contract.view("get_evaluation").args_json(json!({ "token_id": token })).await?.json()?;
+    assert_eq!(ev["outcome"], "target_hit");
+    let nft: Value = s.contract.view("nft_token").args_json(json!({ "token_id": token })).await?.json()?;
+    let extra: Value = serde_json::from_str(nft["metadata"]["extra"].as_str().unwrap())?;
+    assert_eq!(extra["evaluation"]["conditions_met"], true);
+    assert_eq!(extra["proof_count"], 1);
+    println!("upgraded: proofs and balances kept; evaluation recorded on the token: {}", extra["evaluation"]);
     Ok(())
 }

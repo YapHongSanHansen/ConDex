@@ -860,3 +860,122 @@ fn sources_and_ids_are_checked() {
         );
     }
 }
+
+// ---- the evaluation, recorded on the token after the expiry ----
+
+/// Records a target_hit evaluation of `TOKEN` as `caller` at `now`.
+fn evaluate(contract: &mut Contract, caller: &AccountId, now: u64) -> bool {
+    call_as(caller, now, NOTHING);
+    contract.record_evaluation(
+        TOKEN.to_string(),
+        Outcome::TargetHit,
+        Some(true),
+        Some("3500".to_string()),
+        Some("3920".to_string()),
+        Some(T0 + HOUR),
+        Some(T0 + 20 * HOUR),
+        None,
+        3,
+        "simulated".to_string(),
+    )
+}
+
+#[test]
+fn after_the_expiry_the_reporter_records_the_evaluation_on_the_token() {
+    let mut contract = new_contract();
+    mint(&mut contract, TOKEN);
+    assert_eq!(contract.get_evaluation(TOKEN.to_string()), None);
+
+    assert!(evaluate(&mut contract, &reporter(), EXPIRY + HOUR));
+    let ev = contract.get_evaluation(TOKEN.to_string()).unwrap();
+    assert_eq!(ev.outcome, Outcome::TargetHit);
+    assert_eq!(ev.conditions_met, Some(true));
+    assert_eq!(ev.deadline, EXPIRY);
+    assert_eq!(ev.evaluated_at, EXPIRY + HOUR);
+    assert!(get_logs().iter().any(|l| l.contains("thesis_evaluated")));
+
+    // It is part of the token itself, for wallets and explorers.
+    let token = contract.nft_token(TOKEN.to_string()).unwrap();
+    let extra: serde_json::Value = serde_json::from_str(&token.metadata.extra.unwrap()).unwrap();
+    assert_eq!(extra["evaluation"]["outcome"], "target_hit");
+    assert_eq!(extra["evaluation"]["conditions_met"], true);
+}
+
+#[test]
+fn an_evaluation_is_recorded_once_and_never_replaced() {
+    let mut contract = new_contract();
+    mint(&mut contract, TOKEN);
+    assert!(evaluate(&mut contract, &reporter(), EXPIRY));
+    call_as(&reporter(), EXPIRY + 2 * HOUR, NOTHING);
+    let again = contract.record_evaluation(
+        TOKEN.to_string(), Outcome::Invalidated, Some(false), None, None, None, None, None, 0, "simulated".to_string(),
+    );
+    assert!(!again);
+    assert_eq!(contract.get_evaluation(TOKEN.to_string()).unwrap().outcome, Outcome::TargetHit);
+}
+
+#[test]
+#[should_panic(expected = "cannot be evaluated before its deadline")]
+fn nothing_is_evaluated_before_the_expiry() {
+    let mut contract = new_contract();
+    mint(&mut contract, TOKEN);
+    evaluate(&mut contract, &reporter(), EXPIRY - 1);
+}
+
+#[test]
+#[should_panic(expected = "Only the reporter can do this")]
+fn only_the_reporter_records_an_evaluation() {
+    let mut contract = new_contract();
+    mint(&mut contract, TOKEN);
+    evaluate(&mut contract, &operator(), EXPIRY + HOUR);
+}
+
+#[test]
+#[should_panic(expected = "Token ins_nope-v1 does not exist")]
+fn an_unknown_token_cannot_be_evaluated() {
+    let mut contract = new_contract();
+    call_as(&reporter(), EXPIRY, NOTHING);
+    contract.record_evaluation(
+        "ins_nope-v1".to_string(), Outcome::NoData, None, None, None, None, None, None, 0, "simulated".to_string(),
+    );
+}
+
+#[test]
+#[should_panic(expected = "conditions_met does not agree with the outcome")]
+fn the_outcome_decides_whether_the_conditions_were_met() {
+    let mut contract = new_contract();
+    mint(&mut contract, TOKEN);
+    call_as(&reporter(), EXPIRY, NOTHING);
+    contract.record_evaluation(
+        TOKEN.to_string(), Outcome::Invalidated, Some(true), None, None, None, None, None, 2, "simulated".to_string(),
+    );
+}
+
+#[test]
+fn evaluation_prices_times_and_sources_are_checked() {
+    // The mocked chain keeps its storage within a test, so each case gets its own token.
+    let mut contract = new_contract();
+    for (i, (price, at, source)) in [
+        (Some("-1"), None, "simulated"),
+        (None, Some(EXPIRY + 1), "simulated"),
+        (None, None, "venue:acme"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let token = format!("ins_case{i}-v1");
+        mint(&mut contract, &token);
+        call_as(&reporter(), EXPIRY, NOTHING);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.record_evaluation(
+                token.clone(), Outcome::TargetMissed, Some(false), price.map(String::from), None, at, None, None, 1,
+                source.to_string(),
+            )
+        }));
+        assert!(result.is_err(), "{price:?} {at:?} {source} should be refused");
+    }
+    // Every outcome agrees with its own conditions_met.
+    for outcome in [Outcome::NotTriggered, Outcome::AlreadyReached, Outcome::NoData] {
+        assert_eq!(outcome.conditions_met(), None);
+    }
+}

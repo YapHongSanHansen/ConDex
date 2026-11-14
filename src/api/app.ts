@@ -28,6 +28,7 @@ import {
 import { confirmApproval, createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { closeTrade, getClosingOrder } from "../services/trades.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
+import { startEvaluationSweep } from "../services/evaluationSweep.ts";
 import { subscribe, subscriptionStatus } from "../services/subscriptions.ts";
 import { amount, parseNear } from "../util.ts";
 import { assertSameMachine, isSameMachine } from "./local.ts";
@@ -498,6 +499,8 @@ export function createApp(config: Config, deps: AppDeps = {}) {
 
   if (chain && deps.startChainSender !== false) {
     chain.sender.start();
+    // Expired theses are evaluated, and their evaluation sent to their token, without anyone opening them.
+    startEvaluationSweep(ctx);
     // Read the subscription terms once, so the free abstract can show them before anyone subscribes.
     chain.refreshSubscription(chain.client.contractId, true).catch((err) => console.error(`NEAR: could not read the subscription terms: ${String(err)}`));
   }

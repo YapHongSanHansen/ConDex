@@ -45,6 +45,12 @@ export interface Ledger {
    */
   recordClose(orderId: string, close: CloseInput): { tx: string };
 
+  /**
+   * Records a thesis's evaluation on its token, once, after its expiry. The contract refuses it before the
+   * expiry by its own clock, and keeps the first one recorded.
+   */
+  recordEvaluation(tokenId: string, evaluation: EvaluationInput): { tx: string };
+
   listTxs(limit: number): LedgerTx[];
 }
 
@@ -55,6 +61,20 @@ export interface CloseInput {
   /** ISO 8601. */
   closedAt: string;
   /** "simulated" or "venue:<name>". */
+  source: string;
+}
+
+export interface EvaluationInput {
+  outcome: string;
+  conditionsMet: boolean | null;
+  referencePrice: string | null;
+  finalPrice: string | null;
+  /** ISO 8601, or null. */
+  enteredAt: string | null;
+  targetHitAt: string | null;
+  invalidatedAt: string | null;
+  pricesUsed: number;
+  /** "simulated", or "feed:<name>". */
   source: string;
 }
 

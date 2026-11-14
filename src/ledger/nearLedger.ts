@@ -1,7 +1,7 @@
 import { type Db, transaction } from "../db.ts";
 import { conflict, forbidden } from "../errors.ts";
 import { newId, nowIso } from "../util.ts";
-import type { CloseInput, Ledger, LedgerBalance, LedgerReserve, LedgerTx, MintInput } from "./ledger.ts";
+import type { CloseInput, EvaluationInput, Ledger, LedgerBalance, LedgerReserve, LedgerTx, MintInput } from "./ledger.ts";
 import { MockLedger } from "./mockLedger.ts";
 
 /** Which of ConDex's two NEAR accounts signs a call. */
@@ -104,6 +104,17 @@ export class NearLedger implements Ledger {
         order_id: orderId, event_id: close.eventId, quantity: close.quantity, price: close.price,
         closed_at: Date.parse(close.closedAt), source: close.source,
       }, orderId),
+    };
+  }
+
+  recordEvaluation(tokenId: string, e: EvaluationInput) {
+    const ms = (iso: string | null) => (iso === null ? null : Date.parse(iso));
+    return {
+      tx: this.enqueue("reporter", "record_evaluation", {
+        token_id: tokenId, outcome: e.outcome, conditions_met: e.conditionsMet, reference_price: e.referencePrice,
+        final_price: e.finalPrice, entered_at: ms(e.enteredAt), target_hit_at: ms(e.targetHitAt),
+        invalidated_at: ms(e.invalidatedAt), prices_used: e.pricesUsed, source: e.source,
+      }, tokenId),
     };
   }
 
