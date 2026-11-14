@@ -1,6 +1,6 @@
 # The ConDex NEAR contract
 
-The contract is written, in `contract/`, and follows this document. It has unit tests and has not been deployed. The API does not use it yet: it still runs against `MockLedger` (`src/ledger/mockLedger.ts`), which stands in for the contract. See [Building and testing](#building-and-testing).
+The contract is written, in `contract/`, and follows this document. It has unit tests and is deployed on NEAR testnet at `dryward2518.testnet` (see [Testnet deployment](#testnet-deployment)). The API does not use it yet: it still runs against `MockLedger` (`src/ledger/mockLedger.ts`), which stands in for the contract. See [Building and testing](#building-and-testing).
 
 The contract follows the flow described in the README: a trade is closed by a close reported from the execution side, and ConDex evaluates each thesis against market data after its expiry. It also includes two rules the README does not describe yet: the contract checks the trader's own approval before reserving a fee, and it records subscriptions.
 
@@ -194,16 +194,38 @@ The code is in `contract/`, one file per feature: `nft.rs`, `escrow.rs`, `close.
 From the `contract` folder:
 
 ```sh
-cargo test                                      # the unit tests
-cargo check --target wasm32-unknown-unknown     # check that the contract compiles
-cargo near build non-reproducible-wasm          # build the file to deploy
+cargo test                                                # the unit tests
+cargo check --target wasm32-unknown-unknown               # check that the contract compiles
+cargo near build non-reproducible-wasm --locked --no-abi  # build the file to deploy
 ```
 
 - `cargo check` needs the WebAssembly target once: `rustup target add wasm32-unknown-unknown`.
-- `cargo near` is NEAR's build tool, [cargo-near](https://github.com/near/cargo-near). The SDK expects it for the file that goes on chain. It was not installed on the machine the contract was written on, so that last command has not been run yet.
+- `cargo near` is NEAR's build tool, [cargo-near](https://github.com/near/cargo-near). The SDK expects it for the file that goes on chain. The build writes `contract/target/near/condex_contract.wasm`, about 227 KB.
+- `--no-abi` skips an optional file that describes the contract's functions to other tools. Generating it fails on Windows, at the linking step. The contract deploys and works without it. On Linux or macOS the flag can be left out.
 - On Windows, `contract/.cargo/config.toml` lets the tests build without the NASM assembler.
 
-Not done yet: a build with `cargo near`, a deployment to testnet, and tests against a real NEAR node. The unit tests run each function against the SDK's mocked blockchain, which covers the contract's own rules but not the transfer of NEAR between accounts.
+Not done yet: tests against a real NEAR node. The unit tests run each function against the SDK's mocked blockchain, which covers the contract's own rules but not the transfer of NEAR between accounts. On testnet, only the read functions have been called so far.
+
+## Testnet deployment
+
+| | |
+| --- | --- |
+| Contract account | `dryward2518.testnet` |
+| Deployed | 14 November 2026, transaction [`2HMwFmJWjh4q9513WUC3RzrXEpaS4yNvgfuD7jeDZAbX`](https://explorer.testnet.near.org/transactions/2HMwFmJWjh4q9513WUC3RzrXEpaS4yNvgfuD7jeDZAbX) |
+| Code | SHA-256 `4ce810df9bd3494375a5a832c58fdf7721d30de564168153f108bbfb7bb26771`, 227 KB, built with `cargo near build non-reproducible-wasm --locked --no-abi` from commit `361e35c` |
+| Owner and operator | `dryward2518.testnet` |
+| Reporter | `reporter.dryward2518.testnet` |
+| Subscription | 1 NEAR per 30 days |
+
+- **The checksum is from a non-reproducible build.** It matches the file built on the machine that deployed it. The same source built on another machine can give a different checksum.
+- **The reporter account did not exist at deployment.** The contract only stores its name. It has to be created before any fee can be settled or released, or any close recorded. Only `dryward2518.testnet` can create it.
+- **The contract is on a main account.** Its stored data cannot be reset there. A later version that stores data differently has to be deployed to a new account, or come with a migration.
+
+To check the deployment, call a read function. It costs nothing and needs no key:
+
+```sh
+near contract call-function as-read-only dryward2518.testnet nft_metadata json-args '{}' network-config testnet now
+```
 
 ## How this differs from the mock ledger
 
