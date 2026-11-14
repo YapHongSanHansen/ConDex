@@ -1,0 +1,11 @@
+node_modules
+data
+.env
+*.db
+*.db-wal
+*.db-shm
+contract
+test
+docs
+scripts
+README.md
