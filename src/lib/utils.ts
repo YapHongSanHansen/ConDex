@@ -45,3 +45,8 @@ const NEAR_ACCOUNT = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 export function isValidNearAccount(id: string): boolean {
   return id.length >= 2 && id.length <= 64 && NEAR_ACCOUNT.test(id);
 }
+
+/** The expiry ConDex applies when a thesis is published without one: the end of the day seven days out, in UTC. Same rule as the backend. */
+export function defaultExpiryIso(now = Date.now()): string {
+  return new Date(`${new Date(now + 7 * 86_400_000).toISOString().slice(0, 10)}T23:59:59.000Z`).toISOString();
+}

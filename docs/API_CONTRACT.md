@@ -1,5 +1,7 @@
 # API contract (frontend expectations)
 
+> **Partly superseded.** This was the frontend's proposal before the backend existed. The backend chose a different model (tokens, quotes, orders, scoped keys, proofs). The real routes and shapes are in [`BACKEND_LINK.md`](./BACKEND_LINK.md) and `src/lib/api/wire.ts`. The borrow, creator-earnings and export routes below are still what the not-yet-linked pages call.
+
 Base URL: `NEXT_PUBLIC_API_BASE_URL`. JSON in, JSON out. Types live in `src/lib/api/types.ts`.
 
 Only **`GET /v1/borrows/{borrow_id}/insight`** is defined in the project README. **Everything else is a proposal for the backend developer to confirm.**

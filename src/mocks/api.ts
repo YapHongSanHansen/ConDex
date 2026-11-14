@@ -1,6 +1,7 @@
 // @mock-remove — delete after the backend is connected
 import { ApiError } from "@/lib/api/errors";
-import type { Api, Borrow, CreatorKeyInfo, Earnings, Insight, InsightDetail, ListInsightsParams, PendingExport, Receipt } from "@/lib/api/types";
+import type { Api, Borrow, Earnings, Insight, InsightDetail, KeyRow, ListInsightsParams, PendingExport, Receipt } from "@/lib/api/types";
+import type { IssuedKey, McpTool, WireAccount } from "@/lib/api/wire";
 import { MOCK_BORROWS, MOCK_EXPORTS, MOCK_INSIGHTS, MOCK_ME, MOCK_MY_INSIGHTS, MOCK_PRIVATE_TEXT, MOCK_RECEIPTS } from "./data";
 
 // Mutable in-memory state so borrow/revoke/publish visibly change the UI.
@@ -12,7 +13,24 @@ const receipts = [...MOCK_RECEIPTS];
 const myInsights = [...MOCK_MY_INSIGHTS];
 let payoutAccount = MOCK_ME;
 const exportsList = MOCK_EXPORTS.map((e) => ({ ...e }));
-let creatorKey: CreatorKeyInfo = { has_key: false, key_prefix: null, created_at: null, mcp_connected: false, mcp_last_seen: null };
+// Keys and sign-in, in the backend's own shapes (see wire.ts), so the pages never notice the switch.
+const mockKeys: Array<KeyRow & { secret: string }> = [];
+const MOCK_TOOLS: McpTool[] = [
+  ["condex_whoami", "Who am I", "Show the ConDex account and scopes of the connected key."],
+  ["condex_list_insights", "List insights", "List the public previews of published theses."],
+  ["condex_read_insight", "Read an insight", "Read a full conversation. Needs the read scope. Always free."],
+  ["condex_publish_insight", "Publish an insight", "Publish a thesis with its conditions and an expiry."],
+  ["condex_publish_version", "Publish a new version", "Publish a new version of one of your theses."],
+  ["condex_quote_fee", "Quote the fee", "Get the fee for linking an order to a thesis."],
+  ["condex_place_order", "Place an order", "Place an order linked to a thesis. Needs the trade scope."],
+  ["condex_get_order", "Get an order", "Check an order, its fills and its trade result."],
+  ["condex_close_trade", "Close a trade", "Close an open position with a closing order."],
+  ["condex_get_proof", "Get the proof", "Read the proof of thesis and the proofs of trade."],
+  ["condex_list_receipts", "List receipts", "List the fees you have paid or earned."],
+].map(([name, title, description]) => ({ name, title, description }));
+/** A key without its secret, which is never listed. */
+const toRow = (k: KeyRow & { secret: string }): KeyRow => ({ id: k.id, prefix: k.prefix, label: k.label, scopes: [...k.scopes], createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revoked: k.revoked, mcp: k.mcp });
+const MOCK_ACCOUNT = (id: string): WireAccount => ({ id: "acct_mock", near_account_id: id, display_name: id, created_at: new Date().toISOString() });
 const keys = new Map<string, string>(); // borrow id -> issued key (memory only)
 let counter = 100;
 
@@ -154,23 +172,58 @@ export const MOCK_API: Api = {
         return { ...b };
       }, false),
   },
+  auth: {
+    challenge: () => delay(() => ({ message: "Sign in to ConDex (mock). This proves you control this account.", nonce: "bW9jay1ub25jZS0wMDAwMDAwMDAwMDAwMDAwMDAwMDA=", recipient: "localhost", network: "testnet" as const, expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }), false),
+    verify: (body) =>
+      delay(() => ({
+        account: MOCK_ACCOUNT(body.account_id), new_account: false,
+        session: { id: "sess_mock", token: `cdxs_MOCK${Math.random().toString(36).slice(2, 12)}`, expires_at: new Date(Date.now() + 24 * 3600_000).toISOString(), wallet_public_key: body.public_key, key_check: "none" },
+      }), false),
+    logout: () => delay(() => ({ ok: true }), false),
+    me: () => delay(() => ({ account: MOCK_ACCOUNT(MOCK_ME), credential: { type: "session" as const, id: "sess_mock", scopes: ["publish", "read", "trade"], token_ids: null } }), false),
+  },
+  keys: {
+    list: () => delay(() => mockKeys.map(toRow)),
+    issue: (body) =>
+      delay(() => {
+        const secret = `cdx_MOCK${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 14)}`;
+        const row = { id: `key_${++counter}`, prefix: secret.slice(0, 10), label: body.label ?? body.scopes.join("+"), scopes: [...body.scopes], createdAt: new Date().toISOString(), lastUsedAt: null, revoked: false, mcp: null };
+        mockKeys.unshift({ ...row, secret });
+        const issued: IssuedKey = {
+          id: row.id, prefix: row.prefix, label: row.label, scopes: body.scopes, token_ids: body.token_ids ?? null, expires_at: null,
+          revoked_at: null, last_used_at: null, created_at: row.createdAt, secret,
+        };
+        return issued;
+      }),
+    revoke: (keyId) =>
+      delay(() => {
+        const k = mockKeys.find((x) => x.id === keyId);
+        if (!k) throw new ApiError("not_found", "No such key");
+        k.revoked = true; k.mcp = null;
+        return toRow(k);
+      }),
+    mcpTools: () => delay(() => MOCK_TOOLS, false),
+    disconnectMcp: () =>
+      delay(() => {
+        const live = mockKeys.filter((k) => !k.revoked && (k.label === "MCP agent" || k.mcp));
+        for (const k of live) { k.revoked = true; k.mcp = null; }
+        return { revoked: live.length };
+      }),
+    simulateMcpHello: (keyId) =>
+      delay(() => {
+        const k = mockKeys.find((x) => x.id === keyId);
+        if (!k || k.revoked) throw new ApiError("not_found", "No such key");
+        const now = new Date().toISOString();
+        k.mcp = { connectedAt: k.mcp?.connectedAt ?? now, lastSeenAt: now, client: "condex-mcp", tools: MOCK_TOOLS.map((t) => t.name) };
+        k.lastUsedAt = now;
+      }, false),
+  },
   creators: {
     getEarnings: () => delay(earnings),
     listReceipts: () => delay(() => [...receipts]),
     listMyInsights: () => delay(() => [...myInsights]),
-    getCreatorKey: () => delay(() => ({ ...creatorKey })),
-    createCreatorKey: () =>
-      delay(() => {
-        const api_key = `cdx_creator_MOCK${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
-        creatorKey = { has_key: true, key_prefix: api_key.slice(0, 18), created_at: new Date().toISOString(), mcp_connected: false, mcp_last_seen: null };
-        return { info: { ...creatorKey }, api_key };
-      }),
     listExports: () =>
-      delay(() => {
-        // The mock treats the first exported context as proof the MCP server connected.
-        if (exportsList.length && creatorKey.has_key) creatorKey = { ...creatorKey, mcp_connected: true, mcp_last_seen: new Date().toISOString() };
-        return exportsList.map((e) => ({ ...e }));
-      }),
+      delay(() => exportsList.map((e) => ({ ...e }))),
     simulateExport: () =>
       delay(() => {
         const n = ++counter;
@@ -186,7 +239,9 @@ export const MOCK_API: Api = {
         const prev = ex.previous_insight_id ? find(ex.previous_insight_id) : null;
         const n = ++counter;
         const detail: InsightDetail = {
-          id: `ins_${n}`, market: input.market, horizon: input.horizon, price: input.fee, expires_at: input.expires_at,
+          id: `ins_${n}`, market: input.market, horizon: input.horizon, price: input.fee,
+          // With no expiry given, ConDex sets one. The backend uses the end of the day seven days out (UTC).
+          expires_at: input.expires_at ?? new Date(`${new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10)}T23:59:59Z`).toISOString(),
           version: prev ? prev.version + 1 : 1, creator: MOCK_ME, status: "live", created_at: new Date().toISOString(),
           version_hash: ex.version_hash, register_tx_hash: input.register_tx_hash,
           versions: [{ version: 1, version_hash: ex.version_hash, created_at: new Date().toISOString() }],

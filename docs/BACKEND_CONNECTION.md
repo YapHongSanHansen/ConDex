@@ -1,10 +1,12 @@
 # Connecting the real backend
 
+> The backend now exists. **Start with [`BACKEND_LINK.md`](./BACKEND_LINK.md)**: it maps every call to the real routes, lists what is already linked and verified, and lists the decisions still open. The checklist below is the older, general version.
+
 Checklist, in order:
 
 1. **Set env vars** in `.env.local`:
    - `NEXT_PUBLIC_USE_MOCKS=false`
-   - `NEXT_PUBLIC_API_BASE_URL=<backend url>`
+   - `NEXT_PUBLIC_API_BASE_URL=/backend` and `BACKEND_URL=<backend url>` (the dev proxy; the backend sends no CORS headers)
    - `NEXT_PUBLIC_CONTRACT_ID=<deployed testnet contract>`
    - `NEXT_PUBLIC_EXPLORER_TX_URL` (VERIFY the URL pattern; default is `https://testnet.nearblocks.io/txns/`)
 2. **Run the check script:** `npm run check:mocks`. It prints every `@mock-remove` or `MOCK_` hit outside `src/mocks/`.
@@ -12,7 +14,7 @@ Checklist, in order:
 4. **Remove every `// @mock-remove-start` … `// @mock-remove-end` block** the script listed (currently `src/lib/api/index.ts` and `src/lib/near/contract.ts`). Leftover code keeps working: `api` falls back to the real client.
 5. **Confirm the MOCK badges are gone.** They render only while `NEXT_PUBLIC_USE_MOCKS=true`, so with mocks off none should appear. The demo banner disappears too.
 6. **Align the contract.** Edit `src/lib/near/contract.ts` (`register_insight`, `reserve_fee`) to the deployed method names and argument shapes. Currently marked `PROPOSED`.
-7. **Pick the auth scheme.** Resolve `TODO(backend): auth scheme` in `src/lib/api/client.ts`. Today only an `X-Near-Account` header is sent, which is not authentication.
+7. ~~Pick the auth scheme.~~ Done: NEP-413 wallet sign-in gives a session token, sent as `Authorization: Bearer` (see `src/lib/near/session.ts` and `client.ts`).
 8. **Test each page against the real API:**
    - `/` stats and live board load
    - `/gallery` filters, cursor pagination, empty and error states

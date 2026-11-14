@@ -1,5 +1,7 @@
-// Shared source of truth for every request/response shape. Mocks and the real
-// client both implement the interfaces at the bottom of this file.
+// The shapes the pages use. Mocks and the real client both implement the interfaces at the bottom of this file.
+// What the backend actually sends is in `wire.ts`, and `adapters.ts` converts between the two.
+
+import type { Challenge, IssueKeyBody, IssuedKey, McpState, McpTool, Me, SignInResult, VerifyBody } from "./wire";
 
 export type Horizon = "intraday" | "days" | "weeks";
 export type InsightStatus = "live" | "expired" | "revoked";
@@ -71,7 +73,13 @@ export interface PublishExportInput {
   export_id: string;
   market: string;
   horizon: Horizon;
-  expires_at: string;
+  /** The backend records these with every thesis, and a thesis cannot be published without them. */
+  direction: "long" | "short";
+  entry: string;
+  invalidation: string;
+  target: string | null;
+  /** null means the creator gave none, so ConDex sets it and says so. */
+  expires_at: string | null;
   fee: number;
   payout_account: string;
   /** Hash of the NEAR transaction that registered this version. */
@@ -82,25 +90,25 @@ export interface PublishExportResult {
   insight: InsightDetail;
 }
 
-export interface CreatorKeyInfo {
-  has_key: boolean;
+/** An API key as the Connect page lists it. The secret is never part of it. */
+export interface KeyRow {
+  id: string;
   /** First characters only, so the key can be recognised without being exposed. */
-  key_prefix: string | null;
-  created_at: string | null;
-  mcp_connected: boolean;
-  mcp_last_seen: string | null;
-}
-
-export interface CreatorKeyIssued {
-  info: CreatorKeyInfo;
-  /** Returned exactly once. Never persist it. */
-  api_key: string;
+  prefix: string;
+  label: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  revoked: boolean;
+  /** Set once the MCP server has said hello with this key. null means no agent has used it as MCP. */
+  mcp: McpState | null;
 }
 
 export interface Stats {
   insights_listed: number;
-  borrows_today: number;
-  paid_to_creators: number; // NEAR
+  /** null when the backend cannot say. The page shows it as unknown. */
+  borrows_today: number | null;
+  paid_to_creators: number | null; // NEAR
 }
 
 export interface Borrow {
@@ -183,6 +191,11 @@ export type ApiErrorCode =
   | "network_down"
   | "key_expired"
   | "key_invalid"
+  | "missing_scope"
+  | "session_required"
+  | "quote_expired"
+  | "insight_expired"
+  | "thesis_mismatch"
   | "over_budget"
   | "insight_revoked"
   | "not_found"
@@ -216,16 +229,37 @@ export interface CreatorsApi {
   listReceipts(): Promise<Receipt[]>;
   listMyInsights(): Promise<MyInsight[]>;
   updatePayoutAccount(account: string): Promise<Earnings>;
-  getCreatorKey(): Promise<CreatorKeyInfo>;
-  createCreatorKey(): Promise<CreatorKeyIssued>;
   listExports(): Promise<PendingExport[]>;
   publishExport(input: PublishExportInput): Promise<PublishExportResult>;
   /** Mock-only helper; undefined on the real implementation. */
   simulateExport?(): Promise<PendingExport>;
 }
 
+/** Wallet sign-in (NEP-413). A wallet session is what can issue keys. */
+export interface AuthApi {
+  challenge(): Promise<Challenge>;
+  verify(body: VerifyBody): Promise<SignInResult>;
+  logout(): Promise<unknown>;
+  me(): Promise<Me>;
+}
+
+/** API keys for agents, and the MCP connection they prove. All of these need a wallet session. */
+export interface KeysApi {
+  list(): Promise<KeyRow[]>;
+  /** The secret comes back once and is never listed again. */
+  issue(body: IssueKeyBody): Promise<IssuedKey>;
+  revoke(keyId: string): Promise<KeyRow>;
+  mcpTools(): Promise<McpTool[]>;
+  /** Revokes this account's MCP keys. Claude Code keeps its config, but every call now fails. */
+  disconnectMcp(): Promise<{ revoked: number }>;
+  /** Mock-only helper: pretends Claude Code started the MCP server with this key. */
+  simulateMcpHello?(keyId: string): Promise<void>;
+}
+
 export interface Api {
   insights: InsightsApi;
   borrows: BorrowsApi;
   creators: CreatorsApi;
+  auth: AuthApi;
+  keys: KeysApi;
 }
