@@ -34,7 +34,7 @@ test("a creator's agent publishes and a borrower's agent reads and trades over M
   const aliceAgent = await connect(alicePublish);
   const tools = (await aliceAgent.listTools()).tools.map((t) => t.name).sort();
   assert.deepEqual(tools, [
-    "condex_get_order", "condex_get_proof", "condex_list_insights", "condex_list_receipts", "condex_place_order", "condex_publish_insight",
+    "condex_close_trade", "condex_get_order", "condex_get_proof", "condex_list_insights", "condex_list_receipts", "condex_place_order", "condex_publish_insight",
     "condex_publish_version", "condex_quote_fee", "condex_read_insight", "condex_whoami",
   ]);
 
@@ -102,11 +102,23 @@ test("a creator's agent publishes and a borrower's agent reads and trades over M
   }));
   assert.equal(order.body.status, "open");
 
-  await api("POST", `/v1/sim/orders/${order.body.id}/fill`);
+  await api("POST", `/v1/sim/orders/${order.body.id}/fill`, { body: { price: "3500" } });
   const after = json(await bobAgent.callTool({ name: "condex_get_order", arguments: { order_id: order.body.id } }));
   assert.equal(after.body.settlement.status, "settled");
   const receipts = json(await bobAgent.callTool({ name: "condex_list_receipts", arguments: {} }));
   assert.equal(receipts.body.receipts.length, 1);
+
+  // The borrower's agent closes the trade; the closing fill brings the result.
+  const closing = json(await bobAgent.callTool({ name: "condex_close_trade", arguments: { order_id: order.body.id } }));
+  assert.equal(closing.isError, false);
+  assert.equal(closing.body.side, "buy");
+  await api("POST", `/v1/sim/orders/${closing.body.id}/fill`, { body: { price: "3400" } });
+  const closed = json(await bobAgent.callTool({ name: "condex_get_order", arguments: { order_id: order.body.id } }));
+  assert.equal(closed.body.trade.status, "closed");
+  assert.equal(closed.body.trade.result.outcome, "win");
+  assert.equal(closed.body.trade.result.pnl, "100");
+  // Alice's publish-only key cannot close someone else's trade.
+  assert.equal(json(await aliceAgent.callTool({ name: "condex_close_trade", arguments: { order_id: order.body.id } })).isError, true);
 
   const noKey = await connect(undefined);
   assert.equal(json(await noKey.callTool({ name: "condex_whoami", arguments: {} })).isError, true);
@@ -135,7 +147,7 @@ test("an MCP server saying hello makes its key show as connected, with its tools
   assert.ok(after.mcp.tools.includes("condex_publish_insight"));
 
   const tools = (await api("GET", "/v1/mcp/tools")).body.tools.map((t: { name: string }) => t.name);
-  assert.equal(tools.length, 10);
+  assert.equal(tools.length, 11);
   assert.ok(tools.includes("condex_place_order"));
 
   await sayHello({ apiUrl: srv.base, apiKey: "cdx_not-a-real-key" }); // must not throw
