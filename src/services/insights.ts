@@ -4,6 +4,8 @@ import { badRequest, forbidden, notFound } from "../errors.ts";
 import { amount, canonicalJson, newId, nowIso, parseNear, sha256Hex } from "../util.ts";
 import { type AccountRow, type Principal, accountView, assertNearAccountId, getAccount, requireScope } from "./accounts.ts";
 import { type ExpirySetBy, type ResolvedExpiry, resolveExpiry } from "./expiry.ts";
+import { loadOrder } from "./orders.ts";
+import { tradeSummary } from "./trades.ts";
 
 export interface Message {
   role: "user" | "assistant" | "system" | "tool";
@@ -201,19 +203,23 @@ export function thesisProof(ctx: Ctx, tokenId: string) {
       payout_account: row.payout_account,
       mint: { ledger: ctx.ledger.kind, tx: row.mint_tx },
     },
-    proofs_of_trade: trades.map((t) => ({
-      receipt_id: t.receipt_id,
-      thesis: { token_id: row.token_id, content_hash: row.content_hash },
-      trader: t.trader,
-      role: t.trader === creator.near_account_id ? "creator" : "borrower",
-      order: { id: t.order_id, market: t.market, side: t.side, quantity: t.quantity, authorised_at: t.authorised_at, status: t.status },
-      fill: { at: t.fill_at, price: t.fill_price, quantity: t.fill_quantity, source: t.evidence_source },
-      fee_paid: amount(t.fee_yocto),
-      settlement: { ledger: ctx.ledger.kind, tx: t.settle_tx },
-      // Closing fills are not tracked yet, so no result is calculated.
-      closing_fill: null,
-      proven_at: t.proven_at,
-    })),
+    proofs_of_trade: trades.map((t) => {
+      const trade = tradeSummary(ctx, loadOrder(ctx, t.order_id));
+      return {
+        receipt_id: t.receipt_id,
+        thesis: { token_id: row.token_id, content_hash: row.content_hash },
+        trader: t.trader,
+        role: t.trader === creator.near_account_id ? "creator" : "borrower",
+        order: { id: t.order_id, market: t.market, side: t.side, quantity: t.quantity, authorised_at: t.authorised_at, status: t.status },
+        fill: { at: t.fill_at, price: t.fill_price, quantity: t.fill_quantity, source: t.evidence_source },
+        fee_paid: amount(t.fee_yocto),
+        settlement: { ledger: ctx.ledger.kind, tx: t.settle_tx },
+        /** Open, partially closed or closed, with the closing fills and the result calculated from them. */
+        trade,
+        closing_fill: trade.closing_fill,
+        proven_at: t.proven_at,
+      };
+    }),
   };
 }
 
