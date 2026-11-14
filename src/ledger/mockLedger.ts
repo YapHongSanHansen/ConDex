@@ -32,6 +32,7 @@ export class MockLedger implements Ledger {
         issued_at: input.issuedAt,
         expires_at: input.expiresAt,
         expiry_set_by: input.expirySetBy,
+        evaluation_deadline: input.evaluationDeadline,
       });
       this.db.prepare(
         `INSERT INTO ledger_tokens (token_id, owner, payout_account, fee_yocto, content_hash, issued_at, expires_at,

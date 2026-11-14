@@ -40,6 +40,7 @@ enum StorageKey {
     CloseEvents,
     // Added after the first deployment. New variants go at the end, so the earlier prefixes keep their bytes.
     Evaluations,
+    EvaluationDeadlines,
 }
 
 #[near(

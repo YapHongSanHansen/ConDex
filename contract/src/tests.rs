@@ -70,6 +70,7 @@ fn mint(contract: &mut Contract, token_id: &str) {
         T0,
         EXPIRY,
         ExpirySetBy::Creator,
+        None,
     );
 }
 
@@ -163,6 +164,7 @@ fn the_operator_mints_a_thesis_and_anyone_can_read_it() {
         T0,
         EXPIRY,
         ExpirySetBy::CondexAi,
+        None,
     );
     assert_eq!(
         get_logs(),
@@ -219,6 +221,7 @@ fn only_the_operator_can_mint() {
         T0,
         EXPIRY,
         ExpirySetBy::Creator,
+        None,
     );
 }
 
@@ -244,6 +247,7 @@ fn a_fingerprint_must_be_a_sha256() {
         T0,
         EXPIRY,
         ExpirySetBy::Creator,
+        None,
     );
 }
 
@@ -505,6 +509,7 @@ fn the_fee_goes_to_the_payout_account_named_at_minting() {
         T0,
         EXPIRY,
         ExpirySetBy::Creator,
+        None,
     );
     call_as(&bob(), T0, NearToken::from_near(1));
     contract.deposit();
@@ -920,6 +925,51 @@ fn nothing_is_evaluated_before_the_expiry() {
     let mut contract = new_contract();
     mint(&mut contract, TOKEN);
     evaluate(&mut contract, &reporter(), EXPIRY - 1);
+}
+
+/// Mints `TOKEN` with an evaluation deadline of `EXPIRY + 2 * HOUR`.
+fn mint_with_later_deadline(contract: &mut Contract, deadline: u64) {
+    call_as(&operator(), T0, NOTHING);
+    contract.mint_thesis(
+        TOKEN.to_string(), alice(), alice(), FEE, HASH.to_string(), T0, EXPIRY, ExpirySetBy::Creator, Some(deadline),
+    );
+}
+
+#[test]
+fn a_later_evaluation_deadline_moves_the_evaluation_but_not_the_expiry() {
+    let mut contract = new_contract();
+    mint_with_later_deadline(&mut contract, EXPIRY + 2 * HOUR);
+    let token = contract.nft_token(TOKEN.to_string()).unwrap();
+    assert_eq!(token.metadata.expires_at, Some(EXPIRY));
+    assert!(token.metadata.extra.unwrap().contains(&format!("\"evaluation_deadline\":{}", EXPIRY + 2 * HOUR)));
+    // The deadline is later than the event times the evaluation reports, and the evaluation records it.
+    assert!(evaluate(&mut contract, &reporter(), EXPIRY + 2 * HOUR));
+    assert_eq!(contract.get_evaluation(TOKEN.to_string()).unwrap().deadline, EXPIRY + 2 * HOUR);
+}
+
+#[test]
+#[should_panic(expected = "cannot be evaluated before its deadline")]
+fn nothing_is_evaluated_between_the_expiry_and_a_later_evaluation_deadline() {
+    let mut contract = new_contract();
+    mint_with_later_deadline(&mut contract, EXPIRY + 2 * HOUR);
+    evaluate(&mut contract, &reporter(), EXPIRY + HOUR);
+}
+
+#[test]
+fn without_one_the_evaluation_deadline_is_the_expiry() {
+    let mut contract = new_contract();
+    mint(&mut contract, TOKEN);
+    let extra = contract.nft_token(TOKEN.to_string()).unwrap().metadata.extra.unwrap();
+    assert!(extra.contains(&format!("\"evaluation_deadline\":{EXPIRY}")));
+    assert!(evaluate(&mut contract, &reporter(), EXPIRY));
+    assert_eq!(contract.get_evaluation(TOKEN.to_string()).unwrap().deadline, EXPIRY);
+}
+
+#[test]
+#[should_panic(expected = "evaluation_deadline cannot be before expires_at")]
+fn an_evaluation_deadline_cannot_be_before_the_expiry() {
+    let mut contract = new_contract();
+    mint_with_later_deadline(&mut contract, EXPIRY - 1);
 }
 
 #[test]

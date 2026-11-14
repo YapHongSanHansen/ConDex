@@ -47,7 +47,7 @@ The contract exports these 21 functions, plus `contract_source_metadata`, which 
 
 | Function | Who calls it | What it does |
 | --- | --- | --- |
-| `mint_thesis(token_id, owner, payout_account, fee, content_hash, issued_at, expires_at, expiry_set_by)` | Operator | Mints one token per thesis version and stores its revenue split (the payout account at 100%). Fails if the token already exists. |
+| `mint_thesis(token_id, owner, payout_account, fee, content_hash, issued_at, expires_at, expiry_set_by, evaluation_deadline)` | Operator | Mints one token per thesis version and stores its revenue split (the payout account at 100%). `evaluation_deadline` is optional (Unix milliseconds, not before `expires_at`): the moment up to which the thesis is judged. Without it the thesis is judged at its expiry. Fails if the token already exists. |
 | `nft_token(token_id)` | Anyone (view) | Returns the token and its metadata, so wallets and explorers can show it. |
 | `nft_metadata()` | Anyone (view) | Returns the collection name and symbol. |
 | `nft_transfer`, `nft_transfer_call` | Anyone | Required by the standard, but both always fail, because the NFT stays with its creator. |
@@ -115,7 +115,7 @@ In the API a trade can be closed by a close event or by a closing order. Both en
 
 | Function | Who calls it | What it does |
 | --- | --- | --- |
-| `record_evaluation(token_id, outcome, conditions_met, reference_price, final_price, entered_at, target_hit_at, invalidated_at, prices_used, source)` | Reporter | Records, once, whether the thesis's stated conditions were met. Refused before the token's `expires_at` **by the block clock**, so it can never be recorded early. `outcome` is one of the API's eight outcomes, and `conditions_met` must agree with it. `source` is `simulated` or `feed:<name>`. The contract adds `deadline` (the token's `expires_at`) and `evaluated_at` (the block time). Returns `false`, changing nothing, when the token already has one: an evaluation is never replaced. |
+| `record_evaluation(token_id, outcome, conditions_met, reference_price, final_price, entered_at, target_hit_at, invalidated_at, prices_used, source)` | Reporter | Records, once, whether the thesis's stated conditions were met. Refused before the token's evaluation deadline (its `expires_at` unless it was minted with a later one) **by the block clock**, so it can never be recorded early. `outcome` is one of the API's eight outcomes, and `conditions_met` must agree with it. `source` is `simulated` or `feed:<name>`. The contract adds `deadline` (the token's `expires_at`) and `evaluated_at` (the block time). Returns `false`, changing nothing, when the token already has one: an evaluation is never replaced. |
 
 Evaluations are kept under their own storage prefix, not in a field of the contract's state, so adding them changed none of the stored data. The upgrade was a plain redeploy with no migration, tested first on a local node (`contract/sandbox`, `upgrading_keeps_the_state_and_adds_evaluations`).
 
@@ -190,7 +190,7 @@ Every token, reserve, proof, closing fill and subscription takes storage, and NE
 - **Matching the order to the thesis.** The token does not store the market or the direction, so the API checks them before the trader is asked to approve.
 - **The abstract.** The contract only says who is subscribed.
 - **Results, verified results and the creator score.** The score service calculates them. The contract stores the fills, not the percentages.
-- **Judging the thesis.** The API compares the thesis with market data and sends the outcome with `record_evaluation`. The contract records it, refuses it before the expiry, and never lets it change.
+- **Judging the thesis.** The API compares the thesis with market data and sends the outcome with `record_evaluation`. The contract records it, refuses it before the evaluation deadline (the expiry unless the creator set a later one), and never lets it change.
 
 ## Events
 

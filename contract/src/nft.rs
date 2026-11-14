@@ -18,6 +18,9 @@ impl Contract {
     /// `fee` is the usage fee per filled trade. `content_hash` is the fingerprint of the conditions, the
     /// expiry and the approved conversation. `issued_at` and `expires_at` are Unix milliseconds.
     /// The whole fee goes to `payout_account`: the revenue split has that one entry, at 100%.
+    ///
+    /// `evaluation_deadline` is optional: when the thesis is judged on prices up to a later moment than its expiry.
+    /// It cannot be before `expires_at`. Without it the thesis is evaluated at its expiry.
     #[allow(clippy::too_many_arguments)]
     pub fn mint_thesis(
         &mut self,
@@ -29,11 +32,15 @@ impl Contract {
         issued_at: TimestampMs,
         expires_at: TimestampMs,
         expiry_set_by: ExpirySetBy,
+        evaluation_deadline: Option<TimestampMs>,
     ) {
         self.assert_operator();
         assert_id(&token_id, "token_id");
         assert_hash(&content_hash, "content_hash");
         require!(expires_at > issued_at, "expires_at must be after issued_at");
+        if let Some(deadline) = evaluation_deadline {
+            require!(deadline >= expires_at, "evaluation_deadline cannot be before expires_at");
+        }
         require!(
             !self.theses.contains_key(&token_id),
             format!("Token {token_id} is already minted")
@@ -56,6 +63,10 @@ impl Contract {
                 proof_count: 0,
             },
         );
+        // Only a later deadline is stored; without one the expiry is the deadline.
+        if let Some(deadline) = evaluation_deadline.filter(|d| *d > expires_at) {
+            crate::evaluation::set_evaluation_deadline(&token_id, deadline);
+        }
         Nep171Event::NftMint(vec![NftMintLog {
             owner_id: owner,
             token_ids: vec![token_id],
@@ -73,6 +84,7 @@ impl Contract {
             revenue_split: thesis.revenue_split.clone(),
             expiry_set_by: thesis.expiry_set_by,
             proof_count: thesis.proof_count,
+            evaluation_deadline: crate::evaluation::evaluation_deadline_of(&token_id, thesis.expires_at),
             evaluation: crate::evaluation::evaluation_of(&token_id),
         };
         Some(Token {

@@ -91,6 +91,8 @@ export interface MintInput {
    */
   issuedAt: string;
   expiresAt: string;
+  /** When prices stop counting for the evaluation (ISO 8601, UTC). The same as expiresAt unless the creator set a later one. */
+  evaluationDeadline: string;
   /** Whether the creator set the expiry, or ConDex did (its AI, or its default when the AI is off). */
   expirySetBy: "creator" | "condex_ai" | "condex_default";
 }

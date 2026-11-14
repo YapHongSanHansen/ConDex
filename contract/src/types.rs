@@ -91,7 +91,9 @@ pub struct ThesisExtra {
     pub revenue_split: Vec<SplitEntry>,
     pub expiry_set_by: ExpirySetBy,
     pub proof_count: u32,
-    /// Whether the thesis's stated conditions were met, recorded once after its expiry. None until then.
+    /// Prices up to this moment are judged. The same as `expires_at` unless the thesis was minted with a later one.
+    pub evaluation_deadline: TimestampMs,
+    /// Whether the thesis's stated conditions were met, recorded once after its evaluation deadline. None until then.
     pub evaluation: Option<Evaluation>,
 }
 
@@ -146,7 +148,7 @@ pub struct Evaluation {
     pub prices_used: u32,
     /// The market data feed: "simulated", or "feed:<name>".
     pub source: String,
-    /// The token's `expires_at`: prices up to this moment were judged.
+    /// The token's evaluation deadline (its `expires_at` unless it has a later one): prices up to this moment were judged.
     pub deadline: TimestampMs,
     /// When it was recorded, by the block clock. Never before the deadline.
     pub evaluated_at: TimestampMs,

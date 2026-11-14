@@ -2,7 +2,9 @@
 //! the expiry. Step 5 of the flow; the README's "the NFT records the thesis and its verified results".
 //!
 //! Evaluations are kept under their own storage prefix instead of a field of `Contract`, so adding them did
-//! not change the stored contract state: the upgrade is a plain redeploy, with no migration.
+//! not change the stored contract state: the upgrade is a plain redeploy, with no migration. The same goes for
+//! the evaluation deadline: a token minted with a later one has it under its own prefix, and a token without one
+//! (every token minted before it existed) is judged at its expiry, as before.
 
 use near_sdk::store::LookupMap;
 use near_sdk::{env, near, require};
@@ -13,6 +15,22 @@ use crate::{assert_positive_decimal, Contract, ContractExt, StorageKey};
 
 fn evaluations() -> LookupMap<TokenId, Evaluation> {
     LookupMap::new(StorageKey::Evaluations)
+}
+
+fn evaluation_deadlines() -> LookupMap<TokenId, TimestampMs> {
+    LookupMap::new(StorageKey::EvaluationDeadlines)
+}
+
+/// Records the evaluation deadline of a token minted with one later than its expiry.
+pub(crate) fn set_evaluation_deadline(token_id: &TokenId, deadline: TimestampMs) {
+    let mut stored = evaluation_deadlines();
+    stored.insert(token_id.clone(), deadline);
+    stored.flush();
+}
+
+/// The moment up to which a token's prices are judged: its own evaluation deadline, or its expiry when it has none.
+pub(crate) fn evaluation_deadline_of(token_id: &TokenId, expires_at: TimestampMs) -> TimestampMs {
+    evaluation_deadlines().get(token_id).copied().unwrap_or(expires_at)
 }
 
 /// The evaluation recorded on a token, if any.
@@ -35,8 +53,9 @@ fn assert_market_source(value: &str) {
 
 #[near]
 impl Contract {
-    /// Records the evaluation of `token_id`. Only the reporter can call it, and only once the token has
-    /// expired by the block clock, so an evaluation can never be recorded before its deadline.
+    /// Records the evaluation of `token_id`. Only the reporter can call it, and only once the token's evaluation
+    /// deadline (its expiry unless it was minted with a later one) has passed by the block clock, so an evaluation
+    /// can never be recorded before its deadline.
     ///
     /// `conditions_met` must agree with `outcome` (true for target_hit and in_direction, false for
     /// invalidated, target_missed and against_direction, null otherwise). Times are Unix milliseconds.
@@ -59,7 +78,7 @@ impl Contract {
     ) -> bool {
         self.assert_reporter();
         let deadline = match self.theses.get(&token_id) {
-            Some(thesis) => thesis.expires_at,
+            Some(thesis) => evaluation_deadline_of(&token_id, thesis.expires_at),
             None => env::panic_str(&format!("Token {token_id} does not exist")),
         };
         let now = env::block_timestamp_ms();

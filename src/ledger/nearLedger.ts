@@ -48,6 +48,7 @@ export class NearLedger implements Ledger {
         issued_at: Date.parse(input.issuedAt),
         expires_at: Date.parse(input.expiresAt),
         expiry_set_by: input.expirySetBy,
+        evaluation_deadline: Date.parse(input.evaluationDeadline),
       }, input.tokenId);
       this.db.prepare(
         `INSERT INTO ledger_tokens (token_id, owner, payout_account, fee_yocto, content_hash, issued_at, expires_at,

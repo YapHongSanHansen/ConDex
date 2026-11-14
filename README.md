@@ -148,7 +148,7 @@ After a thesis expires, ConDex judges it against market data and records whether
 - **Against what.** The market’s prices from the moment of publishing up to the evaluation deadline, from a connected market data feed. The evaluation names the feed it used.
 - **With what.** The thesis’s price levels. A thesis counts as entered when the price reaches its entry price, or at publishing when it has no entry price or the price is already past it. The invalidation price counts from publishing. The target price counts only once the thesis is entered.
 - **Fixed once recorded.** A later price cannot change the outcome.
-- **On the NFT.** The outcome is recorded on the thesis NFT, so the token carries its own evaluation. The contract refuses it before the token’s expiry and never lets it change. The contract does not know the separate evaluation deadline, so an evaluation whose events fall after the expiry is recorded in ConDex but needs the contract updated before the NFT can carry it.
+- **On the NFT.** The outcome is recorded on the thesis NFT, so the token carries its own evaluation. The contract refuses it before the token’s evaluation deadline (the expiry unless the creator set a later one) and never lets it change. Tokens minted before the deadline existed are judged at their expiry.
 
 | Outcome | When | Conditions met |
 | --- | --- | --- |

@@ -389,6 +389,7 @@ function insertVersion(ctx: Ctx, principal: Principal, insightId: string, versio
     contentHash,
     issuedAt: createdAt,
     expiresAt: p.expiry.expiresAt,
+    evaluationDeadline: p.evaluationDeadline,
     expirySetBy: p.expiry.setBy,
   });
   ctx.db.prepare(
