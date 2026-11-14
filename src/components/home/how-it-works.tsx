@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Bot, Cpu, Database, Laptop, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -102,19 +102,23 @@ function Terminal({ code }: { code: string }) {
   );
 }
 
+const REDUCED = "(prefers-reduced-motion: reduce)";
+function subscribeReducedMotion(onChange: () => void) {
+  const m = window.matchMedia(REDUCED);
+  m.addEventListener("change", onChange);
+  return () => m.removeEventListener("change", onChange);
+}
+
 export function HowItWorks() {
   const [i, setI] = useState(0);
   const [paused, setPaused] = useState(false);
-  const reduced = useRef(false);
+  const reduced = useSyncExternalStore(subscribeReducedMotion, () => window.matchMedia(REDUCED).matches, () => false);
 
   useEffect(() => {
-    reduced.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  }, []);
-  useEffect(() => {
-    if (paused || reduced.current) return;
+    if (paused || reduced) return;
     const t = setInterval(() => setI((n) => (n + 1) % STEPS.length), 5000);
     return () => clearInterval(t);
-  }, [paused]);
+  }, [paused, reduced]);
 
   const s = STEPS[i];
   return (
@@ -141,7 +145,7 @@ export function HowItWorks() {
                   <span className={cn("block font-medium", n !== i && "text-muted group-hover:text-text")}>{st.title}</span>
                   <span className="block text-xs text-muted">{st.short}</span>
                 </span>
-                {n === i && !paused && !reduced.current && <span key={i} className="absolute bottom-0 left-0 h-px bg-text" style={{ animation: "progress 5s linear forwards" }} />}
+                {n === i && !paused && !reduced && <span key={i} className="absolute bottom-0 left-0 h-px bg-text" style={{ animation: "progress 5s linear forwards" }} />}
                 {n === i && <span className="absolute inset-y-0 left-0 w-0.5 bg-text" />}
               </button>
             </li>

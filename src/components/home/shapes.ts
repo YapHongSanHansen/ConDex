@@ -152,8 +152,10 @@ export function renderLum(index: number, angle: number, cols: number, rows: numb
   lum.fill(-1);
   const s = (rows / 2.35) * ZOOM[index];
   for (let i = 0; i < g.x.length; i++) {
-    let x = g.x[i] * cA + g.z[i] * sA, z = -g.x[i] * sA + g.z[i] * cA, y = g.y[i];
-    let nx = g.nx[i] * cA + g.nz[i] * sA, nz = -g.nx[i] * sA + g.nz[i] * cA, ny = g.ny[i];
+    const x = g.x[i] * cA + g.z[i] * sA;
+    const nx = g.nx[i] * cA + g.nz[i] * sA;
+    let z = -g.x[i] * sA + g.z[i] * cA, y = g.y[i];
+    let nz = -g.nx[i] * sA + g.nz[i] * cA, ny = g.ny[i];
     const y2 = y * cT - z * sT, z2 = y * sT + z * cT;
     const ny2 = ny * cT - nz * sT, nz2 = ny * sT + nz * cT;
     y = y2; z = z2; ny = ny2; nz = nz2;
