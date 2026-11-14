@@ -11,6 +11,8 @@ import { type ExecutionVenue, SimulatedVenue } from "../execution/venue.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import { MockLedger } from "../ledger/mockLedger.ts";
 import { type MarketData, SimulatedMarketData } from "../market/marketData.ts";
+import { NearChain } from "../near/chain.ts";
+import { type ChainClient, NearRpcClient } from "../near/chainClient.ts";
 import { type AccessKeyChecker, NoAccessKeyCheck, RpcAccessKeyChecker } from "../near/accessKeys.ts";
 import { MCP_TOOLS, buildMcpServer } from "../mcp/server.ts";
 import { displayPath, findClaudeCli } from "../mcp/claudeCli.ts";
@@ -23,7 +25,7 @@ import type { ExpiryEvaluator } from "../services/expiry.ts";
 import {
   getPreview, listPreviews, publishInsight, publishVersion, publisherProfile, readInsight, thesisProof,
 } from "../services/insights.ts";
-import { createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
+import { confirmApproval, createQuote, getOrder, listOrders, placeOrder } from "../services/orders.ts";
 import { closeTrade, getClosingOrder } from "../services/trades.ts";
 import { type EventType, getReceipt, ingestEvent, listReceipts, replayEvent, simulate } from "../services/settlement.ts";
 import { subscribe, subscriptionStatus } from "../services/subscriptions.ts";
@@ -49,6 +51,10 @@ export interface AppDeps {
   accessKeys?: AccessKeyChecker;
   /** Signer for one-click near-cli sign-in. Defaults to near-cli-rs if found (dev mode only); null disables it. */
   nearCli?: MessageSigner | null;
+  /** The NEAR client when CONDEX_LEDGER=near. Defaults to RPC with the configured keys; tests pass a stand-in. */
+  chainClient?: ChainClient;
+  /** Whether to send queued NEAR calls in the background. Tests turn it off and call ctx.chain.sender.drain(). */
+  startChainSender?: boolean;
   /** ConDex's AI, which sets the expiry of a thesis published without one. Defaults to the configured model; null turns it off. */
   expiryAi?: ExpiryEvaluator | null;
 }
@@ -62,10 +68,14 @@ function configuredExpiryAi(config: Config): ExpiryEvaluator | null {
 export function createApp(config: Config, deps: AppDeps = {}) {
   const db = deps.db ?? openDb(config.dbPath);
   const nearCliBinary = deps.nearCli === undefined && config.devMode ? findNearCli() : null;
+  const chain = config.ledger === "near" && config.near
+    ? new NearChain(db, deps.chainClient ?? new NearRpcClient(config.near.contractId, config.nearRpcUrl), config.near)
+    : null;
   const ctx: Ctx = {
     config,
     db,
-    ledger: deps.ledger ?? new MockLedger(db),
+    chain,
+    ledger: deps.ledger ?? chain?.ledger ?? new MockLedger(db),
     venue: deps.venue ?? new SimulatedVenue(),
     market: deps.market ?? new SimulatedMarketData(db),
     accessKeys: deps.accessKeys
@@ -289,8 +299,15 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     res.status(201).json(subscribe(ctx, auth(req)));
   });
 
-  app.get("/v1/subscription", (req, res) => {
-    res.json(subscriptionStatus(ctx, auth(req)));
+  /** On NEAR, the subscription is read from the contract before a service checks it. */
+  const refreshSubscription = async (p: Principal) => {
+    if (ctx.chain) await ctx.chain.refreshSubscription(p.account.near_account_id);
+  };
+
+  app.get("/v1/subscription", async (req, res) => {
+    const p = auth(req);
+    await refreshSubscription(p);
+    res.json(subscriptionStatus(ctx, p));
   });
 
   // ---- public (no wallet needed): publisher details and abstracts only ----
@@ -314,8 +331,10 @@ export function createApp(config: Config, deps: AppDeps = {}) {
   });
 
   // Full conversation and conditions: needs a read-scoped key and an active subscription (or being the creator).
-  app.get("/v1/tokens/:tokenId", (req, res) => {
-    res.json(readInsight(ctx, auth(req), req.params.tokenId!));
+  app.get("/v1/tokens/:tokenId", async (req, res) => {
+    const p = auth(req);
+    await refreshSubscription(p);
+    res.json(readInsight(ctx, p, req.params.tokenId!));
   });
 
   // ---- trading ----
@@ -349,6 +368,11 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     res.json({ orders: listOrders(ctx, auth(req)) });
   });
 
+  // On NEAR: after the trader signed reserve_fee, ConDex checks it on the contract and submits the order.
+  app.post("/v1/orders/:orderId/confirm-approval", async (req, res) => {
+    res.json(await confirmApproval(ctx, auth(req), req.params.orderId!));
+  });
+
   app.get("/v1/orders/:orderId", (req, res) => {
     res.json(getOrder(ctx, auth(req), req.params.orderId!));
   });
@@ -379,8 +403,11 @@ export function createApp(config: Config, deps: AppDeps = {}) {
 
   // ---- ledger (public reads, like a NEAR explorer: this mirrors what will be public on chain;
   // deposit only on the mock ledger) ----
-  app.get("/v1/ledger/balances/:account", (req, res) => {
-    const b = ctx.ledger.balanceOf(req.params.account!);
+  app.get("/v1/ledger/balances/:account", async (req, res) => {
+    // On NEAR the balances live in the contract (balance_of); the mock keeps its own.
+    const b = ctx.chain
+      ? { account: req.params.account!, ...(await ctx.chain.balanceOf(req.params.account!)) }
+      : ctx.ledger.balanceOf(req.params.account!);
     res.json({
       ledger: ctx.ledger.kind, account: b.account,
       available: amount(b.availableYocto), reserved: amount(b.reservedYocto), earned: amount(b.earnedYocto),
@@ -447,6 +474,12 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     });
   });
 
+  // The calls ConDex signs on NEAR, with their status (queued, sent with a tx hash, or failed with the reason).
+  app.get("/v1/chain/outbox", devOnly, (_req, res) => {
+    if (!ctx.chain) throw notFound("Chain outbox (ConDex is on the mock ledger)");
+    res.json({ contract: ctx.chain.client.contractId, calls: ctx.db.prepare("SELECT * FROM chain_outbox ORDER BY seq DESC LIMIT 200").all() });
+  });
+
   // ---- errors ----
   app.use((_req: Request, _res: Response, next: NextFunction) => next(notFound("Route")));
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -462,6 +495,12 @@ export function createApp(config: Config, deps: AppDeps = {}) {
     console.error(err);
     res.status(500).json({ error: { code: "internal", message: "Internal server error" } });
   });
+
+  if (chain && deps.startChainSender !== false) {
+    chain.sender.start();
+    // Read the subscription terms once, so the free abstract can show them before anyone subscribes.
+    chain.refreshSubscription(chain.client.contractId, true).catch((err) => console.error(`NEAR: could not read the subscription terms: ${String(err)}`));
+  }
 
   return { app, ctx };
 }

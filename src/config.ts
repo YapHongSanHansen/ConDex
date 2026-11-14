@@ -46,6 +46,23 @@ export interface Config {
   llm: LlmConfig | null;
   /** The subscription that unlocks every full thesis. Its fee goes to ConDex, not to creators. */
   subscription: SubscriptionConfig;
+  /**
+   * Where fees, theses and subscriptions are recorded. "mock" (the default) keeps them in SQLite; "near" also
+   * sends them to the ConDex contract, and reads subscriptions and balances from it.
+   */
+  ledger: "mock" | "near";
+  /** The contract and the two accounts ConDex signs with. null unless ledger is "near". */
+  near: NearLedgerConfig | null;
+}
+
+export interface NearLedgerConfig {
+  contractId: string;
+  /** Mints thesis tokens. */
+  operatorId: string;
+  operatorKey: string;
+  /** Settles and releases fees, and records closes. */
+  reporterId: string;
+  reporterKey: string;
 }
 
 export interface SubscriptionConfig {
@@ -100,6 +117,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error("Set CONDEX_AUTH_RECIPIENT to your website's domain (for example condex.app) when CONDEX_DEV_MODE=false");
   }
 
+  const ledger = parseChoice(env, "CONDEX_LEDGER", ["mock", "near"] as const, "mock");
+
   // ConDex's AI: the OpenAI-compatible model when it has a key, else Claude when Anthropic has one.
   const llm = loadLlm(env);
   const hasAnthropicKey = !!(env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim());
@@ -125,11 +144,34 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxyHops: parseInteger(env, "CONDEX_TRUST_PROXY", 0, 0),
     expiryAi,
     llm,
+    ledger,
+    near: ledger === "near" ? loadNear(env) : null,
     subscription: {
       feeNear: parseNearAmount(env, "CONDEX_SUBSCRIPTION_FEE_NEAR", "1"),
       days: parseInteger(env, "CONDEX_SUBSCRIPTION_DAYS", 30),
       treasuryAccount: env.CONDEX_TREASURY_ACCOUNT?.trim() || "condex-treasury.testnet",
     },
+  };
+}
+
+function loadNear(env: NodeJS.ProcessEnv): NearLedgerConfig {
+  const contractId = env.CONDEX_NEAR_CONTRACT?.trim() || "dryward2518.testnet";
+  const operatorId = env.CONDEX_NEAR_OPERATOR_ID?.trim() || contractId;
+  const reporterId = env.CONDEX_NEAR_REPORTER_ID?.trim() || `reporter.${contractId}`;
+  const key = (name: string) => {
+    const value = env[name]?.trim();
+    if (!value || !/^ed25519:[1-9A-HJ-NP-Za-km-z]{40,}$/.test(value)) {
+      throw new Error(
+        `CONDEX_LEDGER=near needs ${name}: the account's secret key as "ed25519:...". ` +
+        "scripts/near-keys-to-env.sh copies it from the macOS Keychain into .env",
+      );
+    }
+    return value;
+  };
+  return {
+    contractId, operatorId, reporterId,
+    operatorKey: key("CONDEX_NEAR_OPERATOR_KEY"),
+    reporterKey: key("CONDEX_NEAR_REPORTER_KEY"),
   };
 }
 

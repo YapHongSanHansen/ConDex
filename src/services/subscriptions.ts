@@ -2,15 +2,15 @@ import type { Ctx } from "../context.ts";
 import { transaction } from "../db.ts";
 import { ApiError } from "../errors.ts";
 import { amount, newId, nowIso, parseNear } from "../util.ts";
-import { type Principal, requireScope } from "./accounts.ts";
+import { type Principal, getAccount, requireScope } from "./accounts.ts";
 
 // Reading is split like a paper behind a paywall: the abstract and the author's accuracy are public, and one
 // subscription to ConDex unlocks every full thesis (its conditions and conversation). The subscription fee
 // goes to ConDex. It only controls reading: trading needs no subscription, and the creator's usage fee is
 // charged on a linked order's first confirmed fill (settlement.ts).
 //
-// Recorded on the mock ledger until the NEAR adapter exists. The status mirrors the contract's
-// subscription_of view (contract/src/subscription.rs), so the adapter can replace it.
+// On the mock ledger, subscriptions are recorded here. With CONDEX_LEDGER=near, the contract records them
+// (subscription_of, read through ctx.chain) and the trader pays it directly. The status has the same shape.
 
 interface SubscriptionRow {
   id: string; account_id: string; starts_at: string; ends_at: string; amount_yocto: string; tx: string; created_at: string;
@@ -19,11 +19,23 @@ interface SubscriptionRow {
 /** The subscription terms, as shown on every abstract and in the error when one is needed. */
 export function subscriptionTerms(ctx: Ctx) {
   const { feeNear, days, treasuryAccount } = ctx.config.subscription;
+  const unlocks = "Every thesis's conditions and conversation. Trading needs no subscription.";
+  if (ctx.chain) {
+    // On NEAR the contract sets the terms, and the trader pays it directly.
+    const terms = ctx.chain.terms;
+    return {
+      fee: amount(terms?.priceYocto ?? parseNear(feeNear)),
+      period_days: terms ? terms.periodMs / 86_400_000 : days,
+      paid_to: ctx.chain.client.contractId,
+      unlocks,
+      how: `Call subscribe() on ${ctx.chain.client.contractId} from your own NEAR account, with the fee attached.`,
+    };
+  }
   return {
     fee: amount(parseNear(feeNear)),
     period_days: days,
     paid_to: treasuryAccount,
-    unlocks: "Every thesis's conditions and conversation. Trading needs no subscription.",
+    unlocks,
     how: "POST /v1/subscription with your wallet session or a trade key (MCP: condex_subscribe).",
   };
 }
@@ -34,6 +46,12 @@ export function subscriptionTerms(ctx: Ctx) {
  */
 export function subscribe(ctx: Ctx, principal: Principal) {
   requireScope(principal, "trade");
+  if (ctx.chain) {
+    const terms = subscriptionTerms(ctx);
+    throw new ApiError(409, "sign_on_chain", `On NEAR you subscribe from your own account. ${terms.how}`, {
+      contract: ctx.chain.client.contractId, method: "subscribe", args: {}, attached_deposit: terms.fee,
+    });
+  }
   const { feeNear, days, treasuryAccount } = ctx.config.subscription;
   const feeYocto = parseNear(feeNear);
   return transaction(ctx.db, () => {
@@ -80,6 +98,12 @@ export function subscriptionStatus(ctx: Ctx, principal: Principal) {
  * no subscription at that time.
  */
 export function activeSubscription(ctx: Ctx, accountId: string, at: string = nowIso()): { ends_at: string } | null {
+  if (ctx.chain) {
+    // What the contract said; the route asks it again first (refreshSubscription) when the answer is old.
+    const account = getAccount(ctx, accountId).near_account_id;
+    const until = ctx.chain.subscribedUntil(account);
+    return until && until > at ? { ends_at: until } : null;
+  }
   const rows = ctx.db.prepare(
     "SELECT starts_at, ends_at FROM subscriptions WHERE account_id = ? AND ends_at > ? ORDER BY starts_at",
   ).all(accountId, at) as Array<{ starts_at: string; ends_at: string }>;

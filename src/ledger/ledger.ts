@@ -39,7 +39,23 @@ export interface Ledger {
 
   getReserve(orderId: string): LedgerReserve | undefined;
 
+  /**
+   * Adds one closing fill to the proof of trade of an order that has one. Calling it again with the same
+   * event id records nothing new.
+   */
+  recordClose(orderId: string, close: CloseInput): { tx: string };
+
   listTxs(limit: number): LedgerTx[];
+}
+
+export interface CloseInput {
+  eventId: string;
+  quantity: string;
+  price: string;
+  /** ISO 8601. */
+  closedAt: string;
+  /** "simulated" or "venue:<name>". */
+  source: string;
 }
 
 /** What the token record of one thesis version holds. Only the fingerprint of the content goes on chain. */

@@ -3,6 +3,7 @@ import type { Db } from "./db.ts";
 import type { ExecutionVenue } from "./execution/venue.ts";
 import type { Ledger } from "./ledger/ledger.ts";
 import type { MarketData } from "./market/marketData.ts";
+import type { NearChain } from "./near/chain.ts";
 import type { AccessKeyChecker } from "./near/accessKeys.ts";
 import type { MessageSigner } from "./near/nearCli.ts";
 import type { ExpiryEvaluator } from "./services/expiry.ts";
@@ -21,6 +22,8 @@ export interface Ctx {
   db: Db;
   ledger: Ledger;
   venue: ExecutionVenue;
+  /** The ConDex contract on NEAR, when CONDEX_LEDGER=near. null on the mock ledger. */
+  chain: NearChain | null;
   /** Market prices a thesis is evaluated against after its deadline. */
   market: MarketData;
   accessKeys: AccessKeyChecker;

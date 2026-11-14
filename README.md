@@ -223,8 +223,8 @@ The API and code call a thesis an *insight*, and its fingerprint a `content_hash
 | Verified results | Built. `verified_results` on the proof endpoint gives the number of fully closed trades, net return %, net profit in dollars and maximum drawdown % for that thesis, before trading costs. They are calculated on each request and are not written to the mock ledger. |
 | Matching | Built for checks 1 to 4. An order in another market, against the thesis’s direction or after the expiry is refused before any fee is reserved, and each linked order records what was checked. Check 5 uses the simulated venue or the execution endpoint. |
 | Pay per filled trade, to the creator | Built, against the mock ledger. The whole fee goes to the payout account named at publishing. |
-| Abstract and subscription | Built, against the mock ledger. `GET /v1/tokens` and `GET /v1/tokens/:id/preview` are public and carry `author_score` (accuracy and the borrowers’ track record) and the subscription terms (`unlock`). `GET /v1/tokens/:id` needs a read key and an active subscription, or answers 402 `subscription_required`; the creator reads their own without one. `POST /v1/subscription` charges one period to `CONDEX_TREASURY_ACCOUNT`. The NEAR contract has the same rules (`subscribe`, `subscription_of`), but the API does not use it yet. |
-| The borrower’s one approval, verified on NEAR | Partly. The NEAR contract’s `reserve_fee` checks the payer, the thesis version, the expiry and the fee, and stores the order’s fingerprint. The API still runs on the mock ledger, where ConDex’s server reserves the fee after checking the borrower’s trade key. |
+| Abstract and subscription | Built, against the mock ledger. `GET /v1/tokens` and `GET /v1/tokens/:id/preview` are public and carry `author_score` (accuracy and the borrowers’ track record) and the subscription terms (`unlock`). `GET /v1/tokens/:id` needs a read key and an active subscription, or answers 402 `subscription_required`; the creator reads their own without one. `POST /v1/subscription` charges one period to `CONDEX_TREASURY_ACCOUNT`. With `CONDEX_LEDGER=near` the API reads subscriptions from the NEAR contract (`subscription_of`) instead, and the trader subscribes there. |
+| The borrower’s one approval, verified on NEAR | Built, with `CONDEX_LEDGER=near`. The order waits as `awaiting_approval` until the borrower signs `reserve_fee` from their own account; `POST /v1/orders/:id/confirm-approval` checks it on the contract before submitting. On the default mock ledger, ConDex’s server reserves the fee after checking the borrower’s trade key. |
 | Creator’s own trades | Not built. A creator cannot link an order to their own thesis. |
 | Creator score | Partly. The publisher page (`GET /v1/publishers/:account`) shows `score.accuracy`: theses judged, conditions met, accuracy %, pending and not judged. It also shows `score.borrowers`, the track record of borrowers’ trades: closed trades, net return %, net profit in dollars and maximum drawdown %. The creator’s own track record is not built, because a creator cannot link an order to their own thesis. |
 
@@ -239,6 +239,11 @@ npm run dev          # same, restarting whenever a source file changes
 npm test             # API flow tests and MCP tests
 npm run test:page    # opens the test console in headless Chrome/Edge and checks every button
 npm run typecheck
+
+# On the NEAR contract instead of the mock ledger (keys from the macOS Keychain, see docs/near-contract.md):
+scripts/near-keys-to-env.sh
+CONDEX_LEDGER=near npm start
+node scripts/testnet-flow.ts   # one full trade through the API on testnet
 ```
 
 `npm start` and `npm run dev` read a git-ignored `.env` file if there is one, for settings such as `CONDEX_LLM_API_KEY`.
@@ -380,7 +385,8 @@ The MCP tools have exactly the scopes of that key: `publish`, `read` and/or `tra
 | `src/services/settlement.ts` | Execution events → one payout on the first fill, release on no-fill endings, close events, idempotent replays. |
 | `src/services/evaluation.ts`, `src/market/` | Evaluating a thesis against market data after its expiry, the result of each closed trade, verified results and the creator score. `MarketData` interface and the simulated feed. |
 | `src/services/trades.ts` | Closing orders, and the one list of closing fills that every result is calculated from. |
-| `src/ledger/` | `Ledger` interface and `MockLedger`. A NEAR testnet adapter replaces the mock. |
+| `src/ledger/` | `Ledger` interface, `MockLedger` (the default) and `NearLedger` (`CONDEX_LEDGER=near`). |
+| `src/near/chain.ts`, `chainClient.ts`, `chainSender.ts` | The NEAR contract: reads (subscriptions, balances, approvals), and the outbox sender for the calls ConDex signs. |
 | `src/execution/venue.ts` | `ExecutionVenue` interface and the simulated venue. |
 | `src/mcp/server.ts` | MCP server (stdio) for creators' and borrowers' agents. |
 | `public/test.html` | Test console, served at `/test` when `CONDEX_DEV_MODE=true` (the default). |
@@ -408,7 +414,11 @@ Invalid values (a misspelt network, `CONDEX_DEV_MODE=yes`, a timeout of `5m`) st
 | `CONDEX_QUOTE_TTL_SECONDS` | `300` | How long a fee quote stays valid. |
 | `CONDEX_SUBSCRIPTION_FEE_NEAR` | `1` | The price of one subscription period, in NEAR. |
 | `CONDEX_SUBSCRIPTION_DAYS` | `30` | How long one subscription period lasts. |
-| `CONDEX_TREASURY_ACCOUNT` | `condex-treasury.testnet` | The NEAR account that receives subscription fees. |
+| `CONDEX_TREASURY_ACCOUNT` | `condex-treasury.testnet` | The NEAR account that receives subscription fees on the mock ledger. |
+| `CONDEX_LEDGER` | `mock` | `mock`, or `near` to run on the ConDex contract. See [docs/near-contract.md](docs/near-contract.md#connecting-the-api-to-the-contract). |
+| `CONDEX_NEAR_CONTRACT` | `dryward2518.testnet` | The contract account, with `CONDEX_LEDGER=near`. |
+| `CONDEX_NEAR_OPERATOR_ID`, `CONDEX_NEAR_OPERATOR_KEY` | the contract account; none | The account that mints thesis tokens, and its `ed25519:…` secret key. Required with `CONDEX_LEDGER=near`; `scripts/near-keys-to-env.sh` writes both into `.env`. |
+| `CONDEX_NEAR_REPORTER_ID`, `CONDEX_NEAR_REPORTER_KEY` | `reporter.<contract>`; none | The account that settles and releases fees and records closes, and its secret key. Required with `CONDEX_LEDGER=near`. |
 | `CONDEX_LLM_API_KEY` | none | Key for the OpenAI-compatible reasoning model that sets a missing expiry. Put it in a git-ignored `.env` file (`npm start` and `npm run dev` read it), never in the code. |
 | `CONDEX_LLM_BASE_URL` | `https://llm.grafilab.ai/v1` | Any OpenAI-compatible endpoint. |
 | `CONDEX_LLM_MODEL` | `qwen/qwen3.7-flash` | Model used for the expiry. |

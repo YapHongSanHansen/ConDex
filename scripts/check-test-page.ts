@@ -198,7 +198,7 @@ try {
     const waiting = String(await page.eval(`document.getElementById("mcp-status-text").textContent`));
     if (!/Waiting for Claude Code/.test(waiting)) throw new Error(`status says "${waiting}"`);
     const tools = await page.eval(`document.querySelectorAll("#mcp-tools li").length`);
-    if (tools !== 14) throw new Error(`the dialog lists ${tools} tools, expected 14`);
+    if (tools !== 15) throw new Error(`the dialog lists ${tools} tools, expected 15`);
     await shot("4-mcp-dialog");
     await page.eval(`document.getElementById("mcp-dialog").close()`);
     const focused = await page.eval(`document.activeElement?.id`);

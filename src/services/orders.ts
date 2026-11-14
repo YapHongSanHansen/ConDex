@@ -5,10 +5,13 @@ import { formatDecimal, parseDecimal } from "../quantity.ts";
 import { amount, newId, nowIso } from "../util.ts";
 import { type Principal, getAccount, requireScope } from "./accounts.ts";
 import { type Direction, type VersionRow, getVersion, isExpired } from "./insights.ts";
+import { orderHash } from "../near/chain.ts";
 import { ingestEvent } from "./settlement.ts";
 import { listClosingOrders, tradeSummary } from "./trades.ts";
 
-export type OrderStatus = "submitted" | "open" | "partially_filled" | "filled" | "cancelled" | "rejected" | "expired";
+/** awaiting_approval: on NEAR, linked and checked, but the trader has not yet approved the fee on chain. */
+export type OrderStatus =
+  | "awaiting_approval" | "submitted" | "open" | "partially_filled" | "filled" | "cancelled" | "rejected" | "expired";
 export type SettlementStatus = "pending" | "settled" | "released";
 
 export interface OrderRow {
@@ -103,7 +106,8 @@ export function placeOrder(ctx: Ctx, principal: Principal, input: PlaceOrderInpu
       fee_yocto: quote.fee_yocto,
       venue: ctx.venue.name,
       venue_order_id: null,
-      status: "submitted",
+      // On NEAR, the order waits for the trader's own reserve_fee before it is submitted (confirmApproval).
+      status: ctx.chain ? "awaiting_approval" : "submitted",
       venue_status_known: 1,
       filled_quantity: "0",
       settlement_status: "pending",
@@ -120,18 +124,76 @@ export function placeOrder(ctx: Ctx, principal: Principal, input: PlaceOrderInpu
       row.limit_price, row.fee_yocto, row.venue, row.status, row.filled_quantity, row.settlement_status,
       row.created_at, row.updated_at,
     );
-    ctx.ledger.reserveFee({
-      orderId: row.id,
-      tokenId: row.token_id,
-      payer: principal.account.near_account_id,
-      payee: version.payout_account,
-      amountYocto: BigInt(row.fee_yocto),
-    });
+    if (!ctx.chain) {
+      ctx.ledger.reserveFee({
+        orderId: row.id,
+        tokenId: row.token_id,
+        payer: principal.account.near_account_id,
+        payee: version.payout_account,
+        amountYocto: BigInt(row.fee_yocto),
+      });
+    }
     ctx.db.prepare("UPDATE quotes SET order_id = ? WHERE id = ?").run(row.id, quote.id);
     return row;
   });
 
-  // Submit after the reserve is committed. The venue's answer arrives as an execution event.
+  if (ctx.chain) return getOrder(ctx, principal, order.id);
+  return submitOrder(ctx, principal, order);
+}
+
+/**
+ * On NEAR: checks that the trader approved this exact order on the contract (reserve_fee from their own
+ * account), records that reserve, then submits the order. Calling it again after that returns the order.
+ */
+export async function confirmApproval(ctx: Ctx, principal: Principal, orderId: string) {
+  requireScope(principal, "trade");
+  const order = loadOrder(ctx, orderId);
+  if (order.borrower_id !== principal.account.id) throw notFound("Order");
+  if (!ctx.chain) throw conflict("not_on_chain", "Orders are approved on NEAR only when ConDex runs with CONDEX_LEDGER=near");
+  if (order.status !== "awaiting_approval") return getOrder(ctx, principal, order.id);
+
+  const reserve = await ctx.chain.reserveOf(order.id);
+  if (!reserve) {
+    throw conflict("approval_missing", `No approval for order ${order.id} on ${ctx.chain.client.contractId} yet. Call reserve_fee with the args in "approval" first`);
+  }
+  const expected = approvalOf(ctx, order).args;
+  const wrong = [
+    reserve.payer !== principal.account.near_account_id && `payer is ${reserve.payer}, not ${principal.account.near_account_id}`,
+    reserve.token_id !== order.token_id && `token is ${reserve.token_id}, not ${order.token_id}`,
+    reserve.amount !== order.fee_yocto && `fee is ${reserve.amount} yoctoNEAR, not ${order.fee_yocto}`,
+    reserve.order_hash !== expected.order_hash && "the approved order is not this one (order_hash differs)",
+    reserve.status !== "reserved" && `the reserve is already ${reserve.status}`,
+  ].filter(Boolean);
+  if (wrong.length > 0) throw conflict("approval_mismatch", `The approval on NEAR does not match this order: ${wrong.join("; ")}`);
+
+  const version = getVersion(ctx, order.token_id);
+  const confirmed = transaction(ctx.db, () => {
+    const fresh = loadOrder(ctx, order.id);
+    if (fresh.status !== "awaiting_approval") return null; // confirmed by a concurrent call
+    ctx.chain!.ledger.mirrorReserve({
+      orderId: order.id, tokenId: order.token_id, payer: reserve.payer, payee: version.payout_account, amountYocto: BigInt(reserve.amount),
+    });
+    ctx.db.prepare("UPDATE orders SET status = 'submitted', updated_at = ? WHERE id = ?").run(nowIso(), order.id);
+    return loadOrder(ctx, order.id);
+  });
+  return confirmed ? submitOrder(ctx, principal, confirmed) : getOrder(ctx, principal, order.id);
+}
+
+/** The reserve_fee call the trader signs on NEAR to approve this order and its fee. */
+function approvalOf(ctx: Ctx, r: OrderRow) {
+  return {
+    contract: ctx.chain!.client.contractId,
+    method: "reserve_fee",
+    args: {
+      order_id: r.id, token_id: r.token_id, fee: r.fee_yocto,
+      order_hash: orderHash({ orderId: r.id, tokenId: r.token_id, market: r.market, side: r.side, quantity: r.quantity }),
+    },
+    then: `POST /v1/orders/${r.id}/confirm-approval`,
+  };
+}
+
+/** Submits an order whose fee is reserved. The venue's answer arrives as an execution event. */
+function submitOrder(ctx: Ctx, principal: Principal, order: OrderRow) {
   const submitted = ctx.venue.submit({
     orderId: order.id, market: order.market, side: order.side, quantity: order.quantity, limitPrice: order.limit_price,
   });
@@ -191,6 +253,8 @@ export function orderView(ctx: Ctx, r: OrderRow) {
       checked: ["market", "direction", "authorised_before_expiry"],
     },
     fee: amount(r.fee_yocto),
+    /** On NEAR, until the trader approves: the contract call to sign. */
+    approval: r.status === "awaiting_approval" && ctx.chain ? approvalOf(ctx, r) : null,
     settlement: {
       status: r.settlement_status,
       receipt_id: r.receipt_id,

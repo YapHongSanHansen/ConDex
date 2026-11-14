@@ -1,7 +1,7 @@
 import { type Db, transaction } from "../db.ts";
 import { conflict, paymentRequired } from "../errors.ts";
 import { nowIso, sha256Hex } from "../util.ts";
-import type { Ledger, LedgerBalance, LedgerReserve, LedgerTx, MintInput } from "./ledger.ts";
+import type { CloseInput, Ledger, LedgerBalance, LedgerReserve, LedgerTx, MintInput } from "./ledger.ts";
 
 interface BalanceRow { account: string; available_yocto: string; reserved_yocto: string; earned_yocto: string }
 interface ReserveRow {
@@ -145,6 +145,15 @@ export class MockLedger implements Ledger {
     return {
       orderId: row.order_id, tokenId: row.token_id, payer: row.payer, payee: row.payee,
       amountYocto: BigInt(row.amount_yocto), status: row.status, reserveTx: row.reserve_tx, finalTx: row.final_tx,
+    };
+  }
+
+  recordClose(orderId: string, close: CloseInput) {
+    return {
+      tx: this.recordTx("record_close", {
+        order_id: orderId, event_id: close.eventId, quantity: close.quantity, price: close.price,
+        closed_at: close.closedAt, source: close.source,
+      }),
     };
   }
 

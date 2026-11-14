@@ -161,7 +161,9 @@ export function buildMcpServer(opts: McpOptions): McpServer {
       "Place an order linked to an insight using a quote. Reserves the quoted fee, which is paid to the creator only if " +
       "the order fills. ConDex refuses the link unless the order is in the insight's market, opens in its direction " +
       "(buy for long, sell for short) and is placed before it expires. Only call this after the user has approved the " +
-      "trade and the fee. Needs a key with trade scope.",
+      "trade and the fee. Needs a key with trade scope. When ConDex runs on NEAR, the order comes back as " +
+      "awaiting_approval with an \"approval\" call: the user signs that reserve_fee call on the ConDex contract from " +
+      "their own NEAR account, then you call condex_confirm_approval.",
     inputSchema: {
       quote_id: z.string(),
       side: z.enum(["buy", "sell"]),
@@ -171,6 +173,15 @@ export function buildMcpServer(opts: McpOptions): McpServer {
       authorise_fee: z.boolean().describe("Must be true: the user has approved reserving the quoted fee"),
     },
   }, (args) => call("POST", "/v1/orders", args));
+
+  server.registerTool("condex_confirm_approval", {
+    title: "Confirm approval on NEAR",
+    description:
+      "After the user signed the order's reserve_fee call on the ConDex contract, ConDex checks the approval on NEAR " +
+      "(payer, fee and order fingerprint) and submits the order. Answers approval_missing if it is not on chain yet. " +
+      "Needs a key with trade scope.",
+    inputSchema: { order_id: z.string() },
+  }, ({ order_id }) => call("POST", `/v1/orders/${encodeURIComponent(order_id)}/confirm-approval`));
 
   server.registerTool("condex_get_order", {
     title: "Get order",

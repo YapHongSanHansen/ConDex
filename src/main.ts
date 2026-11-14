@@ -15,6 +15,9 @@ const reach = config.host === "127.0.0.1" || config.host === "localhost" || conf
 app.listen(config.port, config.host, () => {
   console.log(`ConDex API listening on http://localhost:${config.port} (${reach})`);
   console.log(`  ledger: ${ctx.ledger.kind}   venue: ${ctx.venue.name}   wallet key check: ${ctx.accessKeys.mode}`);
+  if (ctx.chain && config.near) {
+    console.log(`  NEAR contract: ${config.near.contractId} (operator ${config.near.operatorId}, reporter ${config.near.reporterId})`);
+  }
   console.log(`  storage: ${storage}`);
   console.log(`  thesis without an expiry: ${ctx.expiryAi
     ? `ConDex's AI sets it (${ctx.expiryAi.model})`
