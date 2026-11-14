@@ -20,10 +20,44 @@ export const MCP_LABEL = "MCP agent";
 /** A connection is "live" if the MCP server said hello in this long. It says hello every 30 seconds. */
 const LIVE_MS = 2 * 60_000;
 
+/** How the person runs Claude Code decides how it is told about ConDex. */
+export type How = "terminal" | "vscode" | "file";
+
 /** The two lines the backend documents: the first removes an older entry, so the same lines also replace a key. */
 export function mcpCommand(secret: string, serverPath: string) {
   return `claude mcp remove condex
 claude mcp add condex --env CONDEX_API_KEY=${secret} --env CONDEX_API_URL=${MCP_API_URL} "--" node "${serverPath}"`;
+}
+
+/**
+ * The VS Code extension ships its own `claude` program but does not put it on the PATH, so a terminal says
+ * "command not found: claude". This finds the newest copy of it first, then runs the same two lines with it.
+ */
+export function vscodeCommand(secret: string, serverPath: string) {
+  return `CLAUDE="$(ls -d ~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude | tail -1)"
+"$CLAUDE" mcp remove condex
+"$CLAUDE" mcp add condex --env CONDEX_API_KEY=${secret} --env CONDEX_API_URL=${MCP_API_URL} "--" node "${serverPath}"`;
+}
+
+/** A project file Claude Code reads on its own: no terminal and no `claude` program needed. */
+export function mcpJson(secret: string, serverPath: string) {
+  // The file format expands ${HOME}, where the shell commands above use $HOME.
+  const path = serverPath.replace(/^\$HOME(?=\/)/, "${HOME}");
+  return JSON.stringify({ mcpServers: { condex: { command: "node", args: [path], env: { CONDEX_API_KEY: secret, CONDEX_API_URL: MCP_API_URL } } } }, null, 2);
+}
+
+const HOW_LABEL: Record<How, string> = { terminal: "Terminal", vscode: "VS Code extension", file: "A file, no terminal" };
+
+function useHow() {
+  const [how, setHow] = useState<How>("terminal");
+  useEffect(() => {
+    try { const saved = window.localStorage.getItem("condex.claudeHow") as How | null; if (saved && saved in HOW_LABEL) queueMicrotask(() => setHow(saved)); } catch { /* storage blocked */ }
+  }, []);
+  const set = (next: How) => {
+    setHow(next);
+    try { window.localStorage.setItem("condex.claudeHow", next); } catch { /* storage blocked */ }
+  };
+  return [how, set] as const;
 }
 
 /** Where the backend's MCP server file is. In development the backend reports it, so nothing needs to be typed. */
@@ -70,6 +104,7 @@ export function ConnectClaude({ scopes = ["publish"], onConnected, after }: { sc
   const qc = useQueryClient();
   const secret = useSyncExternalStore(keyVault.subscribe, keyVault.get, () => null);
   const server = useServerPath();
+  const [how, setHow] = useHow();
   const now = useNow(10_000);
 
   const { signedIn } = useWallet();
@@ -127,11 +162,23 @@ export function ConnectClaude({ scopes = ["publish"], onConnected, after }: { sc
         ) : (
           <ol className="space-y-5" aria-label="Connect Claude Code">
             <Step n={1}>
-              <p className="font-medium">Run this in your terminal</p>
+              <p className="font-medium">How do you use Claude Code?</p>
+              <div role="radiogroup" aria-label="How you use Claude Code" className="flex flex-wrap gap-1.5">
+                {(Object.keys(HOW_LABEL) as How[]).map((h) => (
+                  <button key={h} type="button" role="radio" aria-checked={how === h} onClick={() => setHow(h)}
+                    className="cursor-pointer rounded-full border border-border px-3 py-1 text-sm text-muted hover:text-text aria-checked:border-accent aria-checked:text-text">{HOW_LABEL[h]}</button>
+                ))}
+              </div>
               {secret ? (
                 <>
-                  <CodeBlock title="terminal" code={mcpCommand(secret.secret, server.path)} />
-                  <p className="text-xs text-muted">Copy it whole and paste it into a terminal window. It already has your key and the right folder in it.</p>
+                  {how === "terminal" && <><CodeBlock title="terminal" code={mcpCommand(secret.secret, server.path)} /><p className="text-xs text-muted">Copy it whole and paste it into a terminal window. It already has your key and the right folder in it. If it says <span className="font-mono">command not found: claude</span>, pick &ldquo;VS Code extension&rdquo; above.</p></>}
+                  {how === "vscode" && <><CodeBlock title="terminal · Mac or Linux" code={vscodeCommand(secret.secret, server.path)} /><p className="text-xs text-muted">The VS Code extension has its own copy of Claude that a terminal cannot find by name. These lines find it, then connect ConDex. Paste all three into a terminal window.</p></>}
+                  {how === "file" && (
+                    <>
+                      <CodeBlock title=".mcp.json" code={mcpJson(secret.secret, server.path)} />
+                      <p className="text-xs text-muted">Save this as a file named <span className="font-mono">.mcp.json</span> in the folder you open in Claude Code, then approve it when Claude Code asks. It holds your key, so do not commit it. If Claude Code already has a ConDex entry, remove it first in <span className="font-mono">/mcp</span>.</p>
+                    </>
+                  )}
                 </>
               ) : (
                 <div className="space-y-2 rounded-md border border-dashed border-border p-3 text-sm">
@@ -143,13 +190,13 @@ export function ConnectClaude({ scopes = ["publish"], onConnected, after }: { sc
                 <div className="space-y-1">
                   <label htmlFor="mcp-path" className="label-caps block">Folder of the ConDex backend on your computer</label>
                   <Input id="mcp-path" value={server.path} onChange={(e) => server.set(e.target.value)} spellCheck={false} className="font-mono text-xs" />
-                  <p className="text-xs text-muted">The full path to <span className="font-mono">src/mcp/server.ts</span>. Change it if the command above has the wrong folder.</p>
+                  <p className="text-xs text-muted">The full path to <span className="font-mono">src/mcp/server.ts</span>. Change it if the text above has the wrong folder.</p>
                 </div>
               )}
             </Step>
             <Step n={2}>
               <p className="font-medium">Restart Claude Code</p>
-              <p className="text-sm text-muted">Close it and open it again. Claude Code only picks up a new tool when it starts.</p>
+              <p className="text-sm text-muted">{how === "vscode" ? "Reload the Claude Code panel in VS Code, or reload the window." : "Close it and open it again."} Claude Code only picks up a new tool when it starts. Type <span className="font-mono">/mcp</span> to check that <span className="font-mono">condex</span> says connected.</p>
             </Step>
             <Step n={3}>
               <p className="font-medium">Wait here</p>
@@ -165,7 +212,9 @@ export function ConnectClaude({ scopes = ["publish"], onConnected, after }: { sc
           <details className="rounded-md border border-border p-3 text-sm">
             <summary className="flex cursor-pointer items-center gap-1 text-muted hover:text-text"><ChevronRight className="h-4 w-4" aria-hidden />Not connecting?</summary>
             <ul className="mt-2 list-disc space-y-1.5 pl-5 text-muted">
-              <li>You ran the command exactly as shown, with no part left out or edited.</li>
+              <li>The terminal did not say <span className="font-mono text-text">command not found: claude</span>. If it did, choose &ldquo;VS Code extension&rdquo; above.</li>
+              <li>You ran everything exactly as shown, with no part left out or edited.</li>
+              <li>Claude Code did not already have an older ConDex entry with an old key. The terminal options replace it. For the file, remove the old one in <span className="font-mono text-text">/mcp</span> first.</li>
               <li>Claude Code was closed and opened again after running it.</li>
               <li>In Claude Code, type <span className="font-mono text-text">/mcp</span>. The <span className="font-mono text-text">condex</span> line should say connected. Or run <span className="font-mono text-text">claude mcp list</span> in a terminal.</li>
               <li>The ConDex backend is running at <span className="font-mono text-text">{MCP_API_URL}</span> on the computer where Claude Code runs.</li>
