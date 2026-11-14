@@ -6,7 +6,7 @@ export const metadata = { title: "Gallery · ConDex" };
 export default function GalleryPage() {
   return (
     <div className="container-wide pb-10">
-      <PageHeader title="Gallery">Public previews only. The context stays with its creator until you borrow.</PageHeader>
+      <PageHeader title="Gallery">Public previews only. The entry, invalidation and conversation unlock with a subscription.</PageHeader>
       <div className="pt-2"><GalleryView /></div>
     </div>
   );

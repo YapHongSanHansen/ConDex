@@ -35,9 +35,9 @@ export function Stats() {
   const near = q.data ? (q.data.paid_to_creators === null ? ["n/a"] : formatNear(q.data.paid_to_creators).split(" ")) : [];
   const known = (n: number | null | undefined) => (n === undefined ? undefined : n === null ? "n/a" : String(n));
   const cards: Card[] = [
-    { label: "Insights", value: known(q.data?.insights_listed), note: "Reasoning published and ready to borrow" },
-    { label: "Borrows today", value: known(q.data?.borrows_today), note: "Times an agent borrowed one today" },
-    { label: "Paid out", value: near[0], unit: near.slice(1).join(" "), note: "Earned by creators, only from executed trades" },
+    { label: "Theses", value: known(q.data?.insights_listed), note: "Reasoning published and still open to trade" },
+    { label: "Trades today", value: known(q.data?.trades_today), note: "Orders linked to a thesis in the last 24 hours" },
+    { label: "Paid out", value: near[0], unit: near.slice(1).join(" "), note: "Earned by creators, only when a linked order fills" },
   ];
 
   return (

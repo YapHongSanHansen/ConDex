@@ -1,10 +1,10 @@
 import { CodeBlock } from "@/components/ui/code-block";
 
-export const RETRIEVAL_SNIPPET = `GET /v1/borrows/{borrow_id}/insight
-Authorization: Bearer <borrow-api-key>
-
-POST /v1/borrows/{borrow_id}/trade-executed   # proposed
-Authorization: Bearer <borrow-api-key>`;
+export const RETRIEVAL_SNIPPET = `GET  /v1/tokens/{token_id}          # read: needs a subscription
+POST /v1/quotes                      # the fee for linking an order
+POST /v1/orders                      # place it, authorising the fee
+POST /v1/orders/{order_id}/close     # close the trade, no fee
+Authorization: Bearer <cdx_… key>`;
 
 export function KeyCapabilities() {
   return (
@@ -12,9 +12,9 @@ export function KeyCapabilities() {
       <div className="space-y-2">
         <p className="label-caps">The key</p>
         <h2 id="key" className="text-2xl font-semibold tracking-tight">What a key lets an agent do</h2>
-        <p className="text-sm leading-relaxed text-muted">One key, one insight version, one expiry. Fetching is free. Reporting an executed trade charges the fee once.</p>
+        <p className="text-sm leading-relaxed text-muted">A key carries the access you choose: publish, read or trade. Reading needs a subscription. A filled linked order pays the creator once.</p>
       </div>
-      <CodeBlock code={RETRIEVAL_SNIPPET} title="retrieval" />
+      <CodeBlock code={RETRIEVAL_SNIPPET} title="read and trade" />
     </section>
   );
 }

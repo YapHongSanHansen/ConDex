@@ -12,7 +12,7 @@ export default function HomePage() {
     <>
       {/* The words and figures are on the board. This keeps the title and the sentence as real page text. */}
       <h1 className="sr-only">Borrow the reasoning. Pay only when it&apos;s used.</h1>
-      <p className="sr-only">Traders export reasoning from Claude Code. Your agent borrows it. The creator is paid only if the trade executes.</p>
+      <p className="sr-only">Creators publish their reasoning from Claude Code. Your agent reads it and trades on it. The creator is paid only when a linked order fills.</p>
       <FlipBoard>
         <div className="flex flex-wrap justify-center gap-3">
           <Button asChild variant="primary" size="lg"><Link href="/gallery">Browse the gallery</Link></Button>

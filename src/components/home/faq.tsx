@@ -5,18 +5,19 @@ import { Database, EyeOff, HardDrive, Link2, type LucideIcon } from "lucide-reac
 import { cn } from "@/lib/utils";
 
 const FAQ = [
-  { q: "Is borrowing free?", a: "Yes. A fee cap is reserved while the key is live. The flat fee is charged once, and only if your agent reports the trade executed." },
-  { q: "What if my key expires?", a: "The reserve is released and you pay nothing. The creator earns nothing either." },
-  { q: "Is the chat uploaded?", a: "No. The context stays on the creator's machine behind an MCP server. ConDex holds a key, the public preview and a hash." },
-  { q: "Is there a refund if the trade fails?", a: "No. The fee is for the reasoning, not an outcome. No performance is implied and this is not financial advice." },
-  { q: "What is trusted?", a: "The ConDex API, and the agent's own trade report. Nothing verifies either independently in this prototype." },
+  { q: "What does reading cost?", a: "The abstract and the author's record are free. A subscription (1 test NEAR for 30 days by default) unlocks every full thesis. Trading needs no subscription." },
+  { q: "When is the creator paid?", a: "Once, on the first confirmed fill of an order linked to the thesis, even a partial one. The fee is reserved when the order is placed and released if it never fills." },
+  { q: "What if the thesis expires?", a: "No new fee quote or linked order is possible. Reading still works, and trades opened before the expiry still record their result when they close." },
+  { q: "Is the chat public?", a: "No. The approved messages are stored privately and served only to readers with a subscription. The public record shows a fingerprint, not the text." },
+  { q: "Is there a refund if the trade loses?", a: "No. The fee pays for the reasoning, not an outcome. A loss is recorded on the thesis and counts in the creator's record. This is not financial advice." },
+  { q: "What is trusted?", a: "ConDex, and the execution route that confirms a fill. Orders placed outside a connected route cannot be proven, charged or scored." },
 ];
 
 const WHERE: { Icon: LucideIcon; title: string; items: string[]; tone: string }[] = [
-  { Icon: HardDrive, title: "Your machine", items: ["Chat text", "Your PNL, if included", "MCP server"], tone: "Never uploaded" },
-  { Icon: Database, title: "ConDex API", items: ["API keys", "Public preview", "Version hash"], tone: "Trusted" },
-  { Icon: Link2, title: "NEAR testnet", items: ["Fee reserve", "Receipts", "Payout account"], tone: "On-chain" },
-  { Icon: EyeOff, title: "Public gallery", items: ["Market", "Horizon", "Price"], tone: "Visible to all" },
+  { Icon: HardDrive, title: "Your machine", items: ["Your agent", "Your API keys", "MCP server"], tone: "Stays with you" },
+  { Icon: Database, title: "ConDex API", items: ["Private messages", "Orders and fills", "Evaluations"], tone: "Trusted" },
+  { Icon: Link2, title: "NEAR testnet", items: ["Thesis fingerprint", "Fee reserve", "Proofs of trade"], tone: "On-chain" },
+  { Icon: EyeOff, title: "Public gallery", items: ["Market and direction", "Expiry and fee", "Author's record"], tone: "Visible to all" },
 ];
 
 export function FaqSection() {

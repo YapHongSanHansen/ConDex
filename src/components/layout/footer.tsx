@@ -2,8 +2,8 @@ import Link from "next/link";
 
 const COLUMNS: { title: string; links: { label: string; href: string; external?: boolean }[] }[] = [
   { title: "Product", links: [{ label: "Gallery", href: "/gallery" }, { label: "Publish an insight", href: "/publish" }, { label: "Connect your API", href: "/keys" }, { label: "Payouts", href: "/payouts" }] },
-  { title: "Developers", links: [{ label: "API contract", href: "#api-contract" }, { label: "MCP setup", href: "/keys" }, { label: "Retrieval endpoint", href: "#retrieval" }, { label: "GitHub", href: "#github" }] },
-  { title: "Protocol", links: [{ label: "NEAR testnet", href: "https://testnet.nearblocks.io", external: true }, { label: "Contract (proposed)", href: "#contract" }, { label: "Wallet connector", href: "https://github.com/hot-dao/near-selector", external: true }] },
+  { title: "Developers", links: [{ label: "API contract", href: "#api-contract" }, { label: "MCP setup", href: "/keys" }, { label: "Read and trade", href: "/keys" }, { label: "GitHub", href: "#github" }] },
+  { title: "Protocol", links: [{ label: "NEAR testnet", href: "https://testnet.nearblocks.io", external: true }, { label: "Contract", href: "https://github.com/YapHongSanHansen/ConDex/tree/backend/contract", external: true }, { label: "Wallet connector", href: "https://github.com/hot-dao/near-selector", external: true }] },
   { title: "Legal", links: [{ label: "Disclaimer", href: "#disclaimer" }, { label: "Privacy", href: "#privacy" }, { label: "Terms", href: "#terms" }] },
 ];
 
@@ -17,7 +17,7 @@ export function Footer() {
         <div className="grid gap-10 lg:grid-cols-[1.4fr_2.6fr]">
           <div className="space-y-4">
             <Link href="/" className="inline-block text-[19px] font-semibold tracking-tight">Con<span className="font-light text-muted">Dex</span></Link>
-            <p className="max-w-xs text-sm leading-relaxed text-muted">Borrow trading reasoning from AI chats. The creator is paid only if the trade executes.</p>
+            <p className="max-w-xs text-sm leading-relaxed text-muted">Trading reasoning from AI chats. The creator is paid only when a linked order fills.</p>
             <p className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 font-mono text-[11px] text-muted">
               <span className="h-1.5 w-1.5 rounded-full bg-text" aria-hidden />NEAR testnet · prototype
             </p>
@@ -40,7 +40,7 @@ export function Footer() {
         </div>
 
         <div id="disclaimer" className="mt-12 grid gap-3 border-t border-border py-6 text-xs text-muted md:grid-cols-[1fr_auto] md:items-center">
-          <p className="max-w-3xl leading-relaxed">Insights are reasoning shared by creators, not financial advice. No performance is implied. Trade reports are self-reported and the API is trusted in this prototype. Testnet only: never use real funds.</p>
+          <p className="max-w-3xl leading-relaxed">Theses are reasoning shared by creators, not financial advice. No performance is implied. Fills come from the execution route ConDex is connected to, and ConDex itself is trusted in this prototype. Testnet only: never use real funds.</p>
           <p className="font-mono">© 2026 ConDex · v0.1.0</p>
         </div>
       </div>

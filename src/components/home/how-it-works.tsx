@@ -16,35 +16,35 @@ const NODES: Record<NodeId, { label: string; sub: string; Icon: LucideIcon; x: s
 interface Edge { from: NodeId; to: NodeId; label: string }
 const STEPS: { title: string; short: string; body: string; edges: Edge[]; code: string; stage: number; amount: string }[] = [
   {
-    title: "Export", short: "Creator exports a context",
-    body: "Claude Code talks to ConDex through an MCP server. Only a hash and a preview leave the machine. The chat stays put.",
-    edges: [{ from: "creator", to: "api", label: "hash + preview" }],
-    code: '> condex.export({ expires: "24h" })\n< { hash: "9c1e…4b07", uploaded: false }',
-    stage: 0, amount: "Nothing reserved",
+    title: "Publish", short: "Creator publishes a thesis",
+    body: "Claude Code publishes through the MCP server: the market, direction, entry, invalidation, an expiry and a fee. The approved messages stay private. A fingerprint of the thesis is minted on NEAR.",
+    edges: [{ from: "creator", to: "api", label: "thesis + expiry" }, { from: "api", to: "near", label: "mint" }],
+    code: '> condex_publish_insight({ market: "ETH-USD", direction: "short",\n    expiry_date: "2026-11-20", fee_near: "0.1" })\n< { token_id: "ins_…-v1", mint: { tx: "…" } }',
+    stage: 0, amount: "Nothing charged",
   },
   {
-    title: "Borrow", short: "Agent reserves a fee cap",
-    body: "The agent approves a fee cap and gets a key scoped to one insight version. The cap is reserved. Nothing is charged.",
-    edges: [{ from: "agent", to: "api", label: "fee cap 0.5" }, { from: "api", to: "near", label: "reserve" }],
-    code: 'POST /v1/insights/ins_001/borrows\n{ "fee_cap": 0.5 }\n< { "borrow_id": "bor_001", "api_key": "cdx_…" }',
-    stage: 1, amount: "0.5 NEAR held",
+    title: "Read", short: "Agent reads the thesis",
+    body: "The abstract and the author's record are free. A subscription unlocks the full thesis for the agent: its conditions and conversation, checked against the fingerprint.",
+    edges: [{ from: "agent", to: "api", label: "GET thesis" }],
+    code: "GET /v1/tokens/ins_…-v1\nAuthorization: Bearer cdx_…\n< { conditions, messages, integrity: { matches: true } }",
+    stage: 1, amount: "Subscription, not per read",
   },
   {
-    title: "Retrieve", short: "Agent fetches, for free",
-    body: "The key unlocks the context, relayed from the creator's machine. Free and safe to retry. If the key expires first, the reserve is released.",
-    edges: [{ from: "agent", to: "api", label: "GET insight" }, { from: "api", to: "creator", label: "relay" }],
-    code: "GET /v1/borrows/bor_001/insight\nAuthorization: Bearer cdx_…\n< { text: \"…\", charged_now: 0 }",
-    stage: 2, amount: "0.5 NEAR held · 0 charged",
+    title: "Trade", short: "Agent links an order",
+    body: "To act on it, the agent asks for a fee quote and places an order in the thesis's market and direction, before the expiry. The fee is reserved, not charged.",
+    edges: [{ from: "agent", to: "api", label: "quote + order" }, { from: "api", to: "near", label: "reserve" }],
+    code: 'POST /v1/quotes  { "token_id": "ins_…-v1" }\nPOST /v1/orders  { "quote_id": "…", "side": "sell",\n  "quantity": "2", "authorise_fee": true }',
+    stage: 2, amount: "0.1 NEAR reserved",
   },
   {
-    title: "Trade and pay", short: "Trade reported, creator paid",
-    body: "If the agent trades, it reports it. The fee is charged once and paid to the creator. The report is self-reported.",
-    edges: [{ from: "agent", to: "api", label: "trade report" }, { from: "api", to: "near", label: "settle" }],
-    code: "POST /v1/borrows/bor_001/trade-executed\n< { charged: true, receipt: \"rcp_…\" }",
-    stage: 3, amount: "0.5 NEAR paid to creator",
+    title: "Pay and prove", short: "First fill pays the creator",
+    body: "On the order's first confirmed fill the fee is paid to the creator once, and a proof of trade is recorded. Closing the trade adds its result. No fill, no fee.",
+    edges: [{ from: "agent", to: "api", label: "fill confirmed" }, { from: "api", to: "near", label: "settle" }],
+    code: '< { settlement: { status: "settled" },\n    trade: { status: "closed", result: { pnl: "400", outcome: "win" } } }',
+    stage: 3, amount: "0.1 NEAR paid to creator",
   },
 ];
-const STAGES = ["Reserved", "Fetched", "Charged once"];
+const STAGES = ["Read", "Reserved", "Paid once"];
 
 function Diagram({ edges }: { edges: Edge[] }) {
   const active = new Set(edges.flatMap((e) => [e.from, e.to]));
